@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PtychoTorch.test_utils &#8212; function_list XXX documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="../../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../../_static/alabaster.css?v=27fed22d" />
+    <script src="../../_static/documentation_options.js?v=22a66780"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+   
+  <link rel="stylesheet" href="../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for PtychoTorch.test_utils</h1><div class="highlight"><pre>
+<span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">PtychoTorch.dataset</span><span class="w"> </span><span class="kn">import</span> <span class="n">DataSet</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PtychoTorch.encoder</span><span class="w"> </span><span class="kn">import</span> <span class="n">Encoder</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PtychoTorch.engine</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoGradPIE</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PtychoTorch.propagators.base</span><span class="w"> </span><span class="kn">import</span> <span class="n">PropagatorPlaceholder</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">change_binning</span><span class="p">,</span> <span class="n">change_cropping</span><span class="p">,</span> <span class="n">fft2c</span><span class="p">,</span> <span class="n">ifft2c</span>
+
+
+<div class="viewcode-block" id="test_fft2c_ifft2c">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.test_utils.test_fft2c_ifft2c">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">test_fft2c_ifft2c</span><span class="p">():</span>
+    <span class="n">E_in</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="mi">5</span><span class="p">,</span> <span class="mi">100</span><span class="p">,</span> <span class="mi">100</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">complex64</span><span class="p">)</span> <span class="o">-</span> <span class="mf">0.5</span> <span class="o">-</span> <span class="mf">0.5</span><span class="n">j</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">testing</span><span class="o">.</span><span class="n">assert_close</span><span class="p">(</span><span class="n">ifft2c</span><span class="p">(</span><span class="n">fft2c</span><span class="p">(</span><span class="n">E_in</span><span class="p">)),</span> <span class="n">E_in</span><span class="p">)</span>
+    <span class="n">torch</span><span class="o">.</span><span class="n">testing</span><span class="o">.</span><span class="n">assert_close</span><span class="p">(</span><span class="n">fft2c</span><span class="p">(</span><span class="n">ifft2c</span><span class="p">(</span><span class="n">E_in</span><span class="p">)),</span> <span class="n">E_in</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="test_binning_cropping">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.test_utils.test_binning_cropping">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">test_binning_cropping</span><span class="p">():</span>
+    <span class="n">N_frames</span> <span class="o">=</span> <span class="mi">10</span>
+    <span class="n">probe_shape</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">Size</span><span class="p">((</span><span class="mi">2048</span><span class="p">,</span> <span class="mi">2048</span><span class="p">))</span>
+    <span class="n">obj_shape</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">Size</span><span class="p">((</span><span class="mi">4500</span><span class="p">,</span> <span class="mi">4500</span><span class="p">))</span>
+    <span class="n">ptycho</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="n">N_frames</span><span class="p">,</span> <span class="o">*</span><span class="n">probe_shape</span><span class="p">)</span>
+    <span class="n">dxd</span> <span class="o">=</span> <span class="mf">1e-5</span>
+    <span class="n">enc</span> <span class="o">=</span> <span class="n">Encoder</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="n">N_frames</span><span class="p">,</span> <span class="mi">2</span><span class="p">))</span>
+    <span class="n">ds</span> <span class="o">=</span> <span class="n">DataSet</span><span class="p">(</span>
+        <span class="n">ptychogram</span><span class="o">=</span><span class="n">ptycho</span><span class="p">,</span>
+        <span class="n">encoder</span><span class="o">=</span><span class="n">enc</span><span class="p">,</span>
+        <span class="n">camera_pixel_size</span><span class="o">=</span><span class="n">dxd</span><span class="p">,</span>
+    <span class="p">)</span>
+
+    <span class="n">eng</span> <span class="o">=</span> <span class="n">AutoGradPIE</span><span class="p">(</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="o">*</span><span class="n">probe_shape</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">complex64</span><span class="p">),</span>
+        <span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="o">*</span><span class="n">obj_shape</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">complex64</span><span class="p">),</span>
+        <span class="n">propagator</span><span class="o">=</span><span class="n">PropagatorPlaceholder</span><span class="p">(</span>
+            <span class="n">dx</span><span class="o">=</span><span class="n">dxd</span><span class="p">,</span>
+            <span class="n">dq</span><span class="o">=</span><span class="n">dxd</span><span class="p">,</span>
+            <span class="n">z</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="mf">10e-2</span><span class="p">),</span>
+            <span class="n">wavelength</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="mf">38e-9</span><span class="p">),</span>
+            <span class="n">probe_shape</span><span class="o">=</span><span class="n">probe_shape</span><span class="p">,</span>
+        <span class="p">),</span>  <span class="c1"># pyright: ignore[reportArgumentType]</span>
+    <span class="p">)</span>
+
+    <span class="n">change_binning</span><span class="p">(</span><span class="n">eng</span><span class="p">,</span> <span class="n">ds</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">eng</span><span class="o">.</span><span class="n">propagator</span><span class="o">.</span><span class="n">dx</span> <span class="o">==</span> <span class="n">dxd</span>
+    <span class="k">assert</span> <span class="n">eng</span><span class="o">.</span><span class="n">propagator</span><span class="o">.</span><span class="n">dq</span> <span class="o">==</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">dxd</span>
+    <span class="k">assert</span> <span class="n">ds</span><span class="o">.</span><span class="n">camera_pixel_size</span> <span class="o">==</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">dxd</span>
+    <span class="n">_obj_sh</span> <span class="o">=</span> <span class="n">eng</span><span class="o">.</span><span class="n">rec_object</span><span class="o">.</span><span class="n">shape</span>
+
+    <span class="n">change_cropping</span><span class="p">(</span><span class="n">eng</span><span class="p">,</span> <span class="n">ds</span><span class="p">,</span> <span class="mi">2048</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">eng</span><span class="o">.</span><span class="n">propagator</span><span class="o">.</span><span class="n">dx</span> <span class="o">==</span> <span class="n">dxd</span>
+    <span class="k">assert</span> <span class="n">eng</span><span class="o">.</span><span class="n">propagator</span><span class="o">.</span><span class="n">dq</span> <span class="o">==</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">dxd</span>
+    <span class="k">assert</span> <span class="n">ds</span><span class="o">.</span><span class="n">camera_pixel_size</span> <span class="o">==</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">dxd</span>
+    <span class="k">assert</span> <span class="n">eng</span><span class="o">.</span><span class="n">rec_object</span><span class="o">.</span><span class="n">shape</span> <span class="o">==</span> <span class="n">_obj_sh</span>
+
+    <span class="n">change_binning</span><span class="p">(</span><span class="n">eng</span><span class="p">,</span> <span class="n">ds</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">eng</span><span class="o">.</span><span class="n">propagator</span><span class="o">.</span><span class="n">dx</span> <span class="o">==</span> <span class="n">dxd</span>
+    <span class="k">assert</span> <span class="n">eng</span><span class="o">.</span><span class="n">propagator</span><span class="o">.</span><span class="n">dq</span> <span class="o">==</span> <span class="n">dxd</span>
+    <span class="k">assert</span> <span class="n">ds</span><span class="o">.</span><span class="n">camera_pixel_size</span> <span class="o">==</span> <span class="n">dxd</span>
+
+    <span class="n">change_cropping</span><span class="p">(</span><span class="n">eng</span><span class="p">,</span> <span class="n">ds</span><span class="p">,</span> <span class="mi">1024</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">eng</span><span class="o">.</span><span class="n">propagator</span><span class="o">.</span><span class="n">dx</span> <span class="o">==</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">dxd</span>
+    <span class="k">assert</span> <span class="n">eng</span><span class="o">.</span><span class="n">propagator</span><span class="o">.</span><span class="n">dq</span> <span class="o">==</span> <span class="n">dxd</span>
+    <span class="k">assert</span> <span class="n">ds</span><span class="o">.</span><span class="n">camera_pixel_size</span> <span class="o">==</span> <span class="n">dxd</span>
+
+    <span class="n">change_binning</span><span class="p">(</span><span class="n">eng</span><span class="p">,</span> <span class="n">ds</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">eng</span><span class="o">.</span><span class="n">propagator</span><span class="o">.</span><span class="n">dx</span> <span class="o">==</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">dxd</span>
+    <span class="k">assert</span> <span class="n">eng</span><span class="o">.</span><span class="n">propagator</span><span class="o">.</span><span class="n">dq</span> <span class="o">==</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">dxd</span>
+    <span class="k">assert</span> <span class="n">ds</span><span class="o">.</span><span class="n">camera_pixel_size</span> <span class="o">==</span> <span class="mi">2</span> <span class="o">*</span> <span class="n">dxd</span>
+
+    <span class="n">change_cropping</span><span class="p">(</span><span class="n">eng</span><span class="p">,</span> <span class="n">ds</span><span class="p">,</span> <span class="mi">2048</span><span class="p">)</span>
+    <span class="n">change_binning</span><span class="p">(</span><span class="n">eng</span><span class="p">,</span> <span class="n">ds</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">eng</span><span class="o">.</span><span class="n">propagator</span><span class="o">.</span><span class="n">dx</span> <span class="o">==</span> <span class="n">dxd</span>
+    <span class="k">assert</span> <span class="n">eng</span><span class="o">.</span><span class="n">propagator</span><span class="o">.</span><span class="n">dq</span> <span class="o">==</span> <span class="n">dxd</span>
+    <span class="k">assert</span> <span class="n">ds</span><span class="o">.</span><span class="n">camera_pixel_size</span> <span class="o">==</span> <span class="n">dxd</span>
+
+    <span class="k">assert</span> <span class="n">eng</span><span class="o">.</span><span class="n">propagator</span><span class="o">.</span><span class="n">probe_shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">:]</span> <span class="o">==</span> <span class="n">probe_shape</span>
+    <span class="k">assert</span> <span class="n">eng</span><span class="o">.</span><span class="n">rec_probe</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">:]</span> <span class="o">==</span> <span class="n">probe_shape</span>
+    <span class="k">assert</span> <span class="n">eng</span><span class="o">.</span><span class="n">rec_object</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">:]</span> <span class="o">==</span> <span class="n">obj_shape</span></div>
+
+
+    <span class="c1"># TODO: Check if objects and probe are interpolated/binned correctly,</span>
+    <span class="c1"># not just pixel sizes</span>
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../index.html">function_list</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../index.html">Documentation overview</a><ul>
+  <li><a href="../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2025, Zhonghui Nie.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 8.2.3</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

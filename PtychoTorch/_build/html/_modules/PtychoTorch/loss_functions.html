@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PtychoTorch.loss_functions &#8212; function_list XXX documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="../../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../../_static/alabaster.css?v=27fed22d" />
+    <script src="../../_static/documentation_options.js?v=22a66780"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+   
+  <link rel="stylesheet" href="../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for PtychoTorch.loss_functions</h1><div class="highlight"><pre>
+<span></span><span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Iterable</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">wraps</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">TYPE_CHECKING</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Self</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch._prims_common</span><span class="w"> </span><span class="kn">import</span> <span class="n">DeviceLikeType</span><span class="p">,</span> <span class="n">Tensor</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch.types</span><span class="w"> </span><span class="kn">import</span> <span class="n">Number</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">PtychoTorch.propagators</span><span class="w"> </span><span class="kn">import</span> <span class="n">BasePropagator</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PtychoTorch.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">fft2c</span><span class="p">,</span> <span class="n">fftfreq</span><span class="p">,</span> <span class="n">get_circular_mask</span><span class="p">,</span> <span class="n">ifft2c</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">.typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">ESW</span><span class="p">,</span> <span class="n">DiffPattern</span><span class="p">,</span> <span class="n">DiffPatternSet</span><span class="p">,</span> <span class="n">Object</span><span class="p">,</span> <span class="n">Probe</span><span class="p">,</span> <span class="n">Roi2D</span>
+
+<span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">.engine</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoGradPIE</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="n">AutoGradPIE</span> <span class="o">=</span> <span class="n">Any</span>
+
+
+<div class="viewcode-block" id="LossFunction">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.loss_functions.LossFunction">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">LossFunction</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">inner</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[</span>
+            <span class="p">[</span><span class="n">DiffPatternSet</span><span class="p">,</span> <span class="n">ESW</span><span class="p">,</span> <span class="n">Probe</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">Object</span> <span class="o">|</span> <span class="kc">None</span><span class="p">],</span> <span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span>
+        <span class="p">],</span>
+    <span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">inner</span> <span class="o">=</span> <span class="n">inner</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">inner</span><span class="o">.</span><span class="vm">__qualname__</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">diff_pattern_set</span><span class="p">:</span> <span class="n">DiffPatternSet</span><span class="p">,</span>
+        <span class="n">esw</span><span class="p">:</span> <span class="n">ESW</span><span class="p">,</span>
+        <span class="n">probe</span><span class="p">:</span> <span class="n">Probe</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">object_patch</span><span class="p">:</span> <span class="n">Object</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span><span class="p">:</span>
+        <span class="n">ret</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">inner</span><span class="p">(</span><span class="n">diff_pattern_set</span><span class="p">,</span> <span class="n">esw</span><span class="p">,</span> <span class="n">probe</span><span class="p">,</span> <span class="n">object_patch</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">ret</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">esw</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">ret</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__str__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">name</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">name</span>
+
+<div class="viewcode-block" id="LossFunction.create_constant">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.loss_functions.LossFunction.create_constant">[docs]</a>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">create_constant</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">val</span><span class="p">:</span> <span class="n">Tensor</span> <span class="o">|</span> <span class="n">Number</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Self</span><span class="p">:</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">is_tensor</span><span class="p">(</span><span class="n">val</span><span class="p">):</span>
+            <span class="n">val</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">val</span><span class="p">)</span>
+
+        <span class="nd">@cls</span>
+        <span class="nd">@wraps</span><span class="p">(</span><span class="bp">cls</span><span class="o">.</span><span class="fm">__call__</span><span class="p">)</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">inner</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">val</span>
+
+        <span class="n">inner</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">val</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="k">return</span> <span class="n">inner</span></div>
+
+
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_check_other</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Self</span><span class="p">:</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="bp">cls</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">other</span>
+
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">Number</span><span class="p">):</span>
+            <span class="k">return</span> <span class="bp">cls</span><span class="o">.</span><span class="n">create_constant</span><span class="p">(</span><span class="n">other</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">Tensor</span><span class="p">):</span>
+            <span class="bp">cls</span><span class="o">.</span><span class="n">create_constant</span><span class="p">(</span><span class="n">other</span><span class="p">)</span>
+
+        <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;&#39;other&#39; has to be of type Number, Tensor, LossFunction. &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;Found: </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">other</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__add__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+        <span class="n">other</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_check_other</span><span class="p">(</span><span class="n">other</span><span class="p">)</span>
+
+        <span class="nd">@LossFunction</span>
+        <span class="nd">@wraps</span><span class="p">(</span><span class="n">LossFunction</span><span class="o">.</span><span class="fm">__call__</span><span class="p">)</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">new_loss</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">inner</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">+</span> <span class="n">other</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+        <span class="n">new_loss</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="bp">self</span><span class="si">}</span><span class="s2"> + </span><span class="si">{</span><span class="n">other</span><span class="si">}</span><span class="s2">)&quot;</span>
+        <span class="k">return</span> <span class="n">new_loss</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__radd__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+        <span class="n">other</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_check_other</span><span class="p">(</span><span class="n">other</span><span class="p">)</span>
+
+        <span class="nd">@LossFunction</span>
+        <span class="nd">@wraps</span><span class="p">(</span><span class="n">LossFunction</span><span class="o">.</span><span class="fm">__call__</span><span class="p">)</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">new_loss</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">other</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">inner</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+        <span class="n">new_loss</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">other</span><span class="si">}</span><span class="s2"> + </span><span class="si">{</span><span class="bp">self</span><span class="si">}</span><span class="s2">)&quot;</span>
+        <span class="k">return</span> <span class="n">new_loss</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__iadd__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Self</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+        <span class="n">other</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_check_other</span><span class="p">(</span><span class="n">other</span><span class="p">)</span>
+
+        <span class="nd">@LossFunction</span>
+        <span class="nd">@wraps</span><span class="p">(</span><span class="n">LossFunction</span><span class="o">.</span><span class="fm">__call__</span><span class="p">)</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">new_loss</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">inner</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-</span> <span class="n">other</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+        <span class="n">new_loss</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="bp">self</span><span class="si">}</span><span class="s2"> - </span><span class="si">{</span><span class="n">other</span><span class="si">}</span><span class="s2">)&quot;</span>
+        <span class="k">return</span> <span class="n">new_loss</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__rsub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+        <span class="n">other</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_check_other</span><span class="p">(</span><span class="n">other</span><span class="p">)</span>
+
+        <span class="nd">@LossFunction</span>
+        <span class="nd">@wraps</span><span class="p">(</span><span class="n">LossFunction</span><span class="o">.</span><span class="fm">__call__</span><span class="p">)</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">new_loss</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">other</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">inner</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+        <span class="n">new_loss</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">other</span><span class="si">}</span><span class="s2"> - </span><span class="si">{</span><span class="bp">self</span><span class="si">}</span><span class="s2">)&quot;</span>
+        <span class="k">return</span> <span class="n">new_loss</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__isub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Self</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__mul__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+        <span class="n">other</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_check_other</span><span class="p">(</span><span class="n">other</span><span class="p">)</span>
+
+        <span class="nd">@LossFunction</span>
+        <span class="nd">@wraps</span><span class="p">(</span><span class="n">LossFunction</span><span class="o">.</span><span class="fm">__call__</span><span class="p">)</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">new_loss</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">inner</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">*</span> <span class="n">other</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+        <span class="n">new_loss</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="bp">self</span><span class="si">}</span><span class="s2"> * </span><span class="si">{</span><span class="n">other</span><span class="si">}</span><span class="s2">)&quot;</span>
+        <span class="k">return</span> <span class="n">new_loss</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__rmul__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+        <span class="n">other</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_check_other</span><span class="p">(</span><span class="n">other</span><span class="p">)</span>
+
+        <span class="nd">@LossFunction</span>
+        <span class="nd">@wraps</span><span class="p">(</span><span class="n">LossFunction</span><span class="o">.</span><span class="fm">__call__</span><span class="p">)</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">new_loss</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">other</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">inner</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+        <span class="n">new_loss</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">other</span><span class="si">}</span><span class="s2"> * </span><span class="si">{</span><span class="bp">self</span><span class="si">}</span><span class="s2">)&quot;</span>
+        <span class="k">return</span> <span class="n">new_loss</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__imul__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Self</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__truediv__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+        <span class="n">other</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_check_other</span><span class="p">(</span><span class="n">other</span><span class="p">)</span>
+
+        <span class="nd">@LossFunction</span>
+        <span class="nd">@wraps</span><span class="p">(</span><span class="n">LossFunction</span><span class="o">.</span><span class="fm">__call__</span><span class="p">)</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">new_loss</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">inner</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">/</span> <span class="n">other</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+        <span class="n">new_loss</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="bp">self</span><span class="si">}</span><span class="s2"> / </span><span class="si">{</span><span class="n">other</span><span class="si">}</span><span class="s2">)&quot;</span>
+        <span class="k">return</span> <span class="n">new_loss</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__rtruediv__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+        <span class="n">other</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_check_other</span><span class="p">(</span><span class="n">other</span><span class="p">)</span>
+
+        <span class="nd">@LossFunction</span>
+        <span class="nd">@wraps</span><span class="p">(</span><span class="n">LossFunction</span><span class="o">.</span><span class="fm">__call__</span><span class="p">)</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">new_loss</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">other</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">inner</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+        <span class="n">new_loss</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">other</span><span class="si">}</span><span class="s2"> / </span><span class="si">{</span><span class="bp">self</span><span class="si">}</span><span class="s2">)&quot;</span>
+        <span class="k">return</span> <span class="n">new_loss</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__itruediv__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Self</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__pow__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+        <span class="n">other</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_check_other</span><span class="p">(</span><span class="n">other</span><span class="p">)</span>
+
+        <span class="nd">@LossFunction</span>
+        <span class="nd">@wraps</span><span class="p">(</span><span class="n">LossFunction</span><span class="o">.</span><span class="fm">__call__</span><span class="p">)</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">new_loss</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">inner</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">**</span> <span class="n">other</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+        <span class="n">new_loss</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="bp">self</span><span class="si">}</span><span class="s2"> ** </span><span class="si">{</span><span class="n">other</span><span class="si">}</span><span class="s2">)&quot;</span>
+        <span class="k">return</span> <span class="n">new_loss</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__rpow__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+        <span class="n">other</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_check_other</span><span class="p">(</span><span class="n">other</span><span class="p">)</span>
+
+        <span class="nd">@LossFunction</span>
+        <span class="nd">@wraps</span><span class="p">(</span><span class="n">LossFunction</span><span class="o">.</span><span class="fm">__call__</span><span class="p">)</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">new_loss</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">other</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">**</span> <span class="bp">self</span><span class="o">.</span><span class="n">inner</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+        <span class="n">new_loss</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;(</span><span class="si">{</span><span class="n">other</span><span class="si">}</span><span class="s2"> ** </span><span class="si">{</span><span class="bp">self</span><span class="si">}</span><span class="s2">)&quot;</span>
+        <span class="k">return</span> <span class="n">new_loss</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__ipow__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Self</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span></div>
+
+
+
+<div class="viewcode-block" id="Constant">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.loss_functions.Constant">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">Constant</span><span class="p">(</span><span class="n">val</span><span class="p">:</span> <span class="n">Tensor</span> <span class="o">|</span> <span class="n">Number</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LossFunction</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">LossFunction</span><span class="o">.</span><span class="n">create_constant</span><span class="p">(</span><span class="n">val</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="ESW_to_intensity">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.loss_functions.ESW_to_intensity">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">ESW_to_intensity</span><span class="p">(</span>
+    <span class="n">esw</span><span class="p">:</span> <span class="n">ESW</span><span class="p">,</span>
+    <span class="n">diff_pattern_set</span><span class="p">:</span> <span class="n">DiffPatternSet</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DiffPattern</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Converts amplitude to intensity.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        esw_detector: El. field to be converted to intensity</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Intensity (Diffraction Pattern)</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1"># amplitude at detector (per wavelength)</span>
+    <span class="n">intensity_detector</span> <span class="o">=</span> <span class="n">esw</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">square</span><span class="p">()</span>
+
+    <span class="c1"># sum incoherently over all dimensions other than x/y</span>
+    <span class="n">summing_dims</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">esw</span><span class="o">.</span><span class="n">dim</span><span class="p">())</span> <span class="o">-</span> <span class="mi">2</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">summing_dims</span> <span class="o">!=</span> <span class="p">[]:</span>
+        <span class="n">intensity_detector</span> <span class="o">=</span> <span class="n">intensity_detector</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="n">summing_dims</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">diff_pattern_set</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">bkgd</span> <span class="o">:=</span> <span class="n">diff_pattern_set</span><span class="o">.</span><span class="n">background</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">intensity_detector</span> <span class="o">=</span> <span class="n">intensity_detector</span> <span class="o">+</span> <span class="n">bkgd</span>
+
+        <span class="k">if</span> <span class="p">(</span><span class="n">exp_s</span> <span class="o">:=</span> <span class="n">diff_pattern_set</span><span class="o">.</span><span class="n">exposure_time_s</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">intensity_detector</span> <span class="o">=</span> <span class="n">intensity_detector</span> <span class="o">/</span> <span class="n">exp_s</span>
+
+    <span class="k">return</span> <span class="n">intensity_detector</span></div>
+
+
+
+<span class="nd">@LossFunction</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">MSE_amplitude</span><span class="p">(</span>
+    <span class="n">diff_pattern_set</span><span class="p">:</span> <span class="n">DiffPatternSet</span><span class="p">,</span>
+    <span class="n">esw_detector</span><span class="p">:</span> <span class="n">ESW</span><span class="p">,</span>
+    <span class="n">probe</span><span class="p">:</span> <span class="n">Probe</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">object_patch</span><span class="p">:</span> <span class="n">Object</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Mean Squared Error comparing amplitudes in detector space.</span>
+
+<span class="sd">    Single Probe:</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        L=\\sum_{\\text{pixels}}\\left( \\sqrt{I}</span>
+<span class="sd">            - \\left\\lvert\\tilde{\\psi}\\right\\rvert \\right)^2</span>
+
+<span class="sd">    For incoherenct summation with multiple wavelengths/Probes with index :math:`i`:</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        L=\\sum_{\\text{pixels}}\\left( \\sqrt{I}</span>
+<span class="sd">        - \\sqrt{\\sum_{i=1} \\left\\lvert\\tilde{\\psi_i}\\right\\rvert^2} \\right)^2</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        I_measured: Measured Diffraction Pattern</span>
+<span class="sd">        esw_detector: Exit-Surface-Wave in camera plane</span>
+<span class="sd">        probe: Not used for this loss-function.</span>
+<span class="sd">        object_patch: Not used for this loss-function.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Loss, call .backward() on this variable to calculate and store gradients.</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">I_measured</span> <span class="o">=</span> <span class="n">diff_pattern_set</span><span class="o">.</span><span class="n">diff_pattern</span>
+    <span class="n">I_estimated</span> <span class="o">=</span> <span class="n">ESW_to_intensity</span><span class="p">(</span>
+        <span class="n">esw</span><span class="o">=</span><span class="n">esw_detector</span><span class="p">,</span>
+        <span class="n">diff_pattern_set</span><span class="o">=</span><span class="n">diff_pattern_set</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">I_measured</span><span class="o">.</span><span class="n">sqrt</span><span class="p">()</span> <span class="o">-</span> <span class="n">I_estimated</span><span class="o">.</span><span class="n">sqrt</span><span class="p">())</span><span class="o">.</span><span class="n">square</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+
+
+<span class="nd">@LossFunction</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">MSE_intensity</span><span class="p">(</span>
+    <span class="n">diff_pattern_set</span><span class="p">:</span> <span class="n">DiffPatternSet</span><span class="p">,</span>
+    <span class="n">esw_detector</span><span class="p">:</span> <span class="n">ESW</span><span class="p">,</span>
+    <span class="n">probe</span><span class="p">:</span> <span class="n">Probe</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">object_patch</span><span class="p">:</span> <span class="n">Object</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Mean Squared Error comparing intensities in detector space.</span>
+
+<span class="sd">    Single Probe:</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        L=\\sum_{\\text{pixels}}\\left( I</span>
+<span class="sd">            - \\left\\lvert\\tilde{\\psi}\\right\\rvert \\right)^2</span>
+
+<span class="sd">    For incoherenct summation with multiple wavelengths/Probes with index :math:`i`:</span>
+
+<span class="sd">    .. math::</span>
+
+<span class="sd">        L=\\sum_{\\text{pixels}}\\left( I</span>
+<span class="sd">            - \\sum_{i=1} \\left\\lvert\\tilde{\\psi_i}\\right\\rvert^2 \\right)^2</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        I_measured: Measured Diffraction Pattern</span>
+<span class="sd">        esw_detector: Exit-Surface-Wave in camera plane</span>
+<span class="sd">        probe: Not used for this loss-function.</span>
+<span class="sd">        object_patch: Not used for this loss-function.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Loss, call .backward() on this variable to calculate and store gradients.</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">I_measured</span> <span class="o">=</span> <span class="n">diff_pattern_set</span><span class="o">.</span><span class="n">diff_pattern</span>
+    <span class="n">I_estimated</span> <span class="o">=</span> <span class="n">ESW_to_intensity</span><span class="p">(</span>
+        <span class="n">esw</span><span class="o">=</span><span class="n">esw_detector</span><span class="p">,</span>
+        <span class="n">diff_pattern_set</span><span class="o">=</span><span class="n">diff_pattern_set</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">I_measured</span> <span class="o">-</span> <span class="n">I_estimated</span><span class="p">)</span><span class="o">.</span><span class="n">square</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+
+
+<div class="viewcode-block" id="MaskProbe">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.loss_functions.MaskProbe">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">MaskProbe</span><span class="p">(</span><span class="n">LossFunction</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">mask</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Mask for Probe.</span>
+
+<span class="sd">        Multiplies mask with probe.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            mask: Tensor with values between 0 and 1, or boolean mask.</span>
+<span class="sd">                Dimension: (..., H, W)</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            loss-function</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">inner</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mask</span> <span class="o">=</span> <span class="n">mask</span>
+
+<div class="viewcode-block" id="MaskProbe.inner">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.loss_functions.MaskProbe.inner">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">inner</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">diff_pattern_set</span><span class="p">:</span> <span class="n">DiffPatternSet</span><span class="p">,</span>
+        <span class="n">esw_detector</span><span class="p">:</span> <span class="n">ESW</span><span class="p">,</span>
+        <span class="n">probe</span><span class="p">:</span> <span class="n">Probe</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">object_patch</span><span class="p">:</span> <span class="n">Object</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">probe</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">probe</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">mask</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span></div>
+</div>
+
+
+
+<div class="viewcode-block" id="ApertureProbe">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.loss_functions.ApertureProbe">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">ApertureProbe</span><span class="p">(</span><span class="n">MaskProbe</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">pupil_diameter</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>  <span class="c1"># diameter of beam</span>
+        <span class="n">propagator</span><span class="p">:</span> <span class="n">BasePropagator</span><span class="p">,</span>
+        <span class="n">sample_projection_angle_deg</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>  <span class="c1"># 0 = transmission</span>
+        <span class="n">mode</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;hard_edge&quot;</span><span class="p">,</span>
+        <span class="n">device</span><span class="p">:</span> <span class="n">DeviceLikeType</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="k">if</span> <span class="n">device</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">device</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">cpu</span><span class="o">.</span><span class="n">current_device</span><span class="p">()</span>
+
+        <span class="k">match</span> <span class="n">mode</span><span class="o">.</span><span class="n">lower</span><span class="p">():</span>
+            <span class="k">case</span> <span class="s2">&quot;hard_edge&quot;</span><span class="p">:</span>
+                <span class="n">mask</span> <span class="o">=</span> <span class="o">~</span><span class="n">get_circular_mask</span><span class="p">(</span>
+                    <span class="n">pupil_diameter</span><span class="p">,</span>
+                    <span class="n">propagator</span><span class="o">.</span><span class="n">probe_shape</span><span class="p">,</span>
+                    <span class="n">propagator</span><span class="o">.</span><span class="n">dx</span><span class="p">,</span>
+                    <span class="n">sample_projection_angle_deg</span><span class="p">,</span>
+                    <span class="n">device</span><span class="p">,</span>
+                <span class="p">)</span>
+            <span class="k">case</span> <span class="s2">&quot;hard_edge_smooth&quot;</span><span class="p">:</span>
+                <span class="n">mask</span> <span class="o">=</span> <span class="o">~</span><span class="n">get_circular_mask</span><span class="p">(</span>
+                    <span class="n">pupil_diameter</span><span class="p">,</span>
+                    <span class="n">propagator</span><span class="o">.</span><span class="n">probe_shape</span><span class="p">,</span>
+                    <span class="n">propagator</span><span class="o">.</span><span class="n">dx</span><span class="p">,</span>
+                    <span class="n">sample_projection_angle_deg</span><span class="p">,</span>
+                    <span class="n">device</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="n">mask</span> <span class="o">=</span> <span class="n">mask</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span>
+
+                <span class="n">x</span> <span class="o">=</span> <span class="n">fftfreq</span><span class="p">(</span><span class="n">propagator</span><span class="o">.</span><span class="n">probe_shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+                <span class="n">XX</span><span class="p">,</span> <span class="n">YY</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">meshgrid</span><span class="p">([</span><span class="n">x</span><span class="p">,</span> <span class="n">x</span><span class="p">],</span> <span class="n">indexing</span><span class="o">=</span><span class="s2">&quot;xy&quot;</span><span class="p">)</span>
+                <span class="n">r</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="n">XX</span><span class="o">.</span><span class="n">square</span><span class="p">()</span> <span class="o">+</span> <span class="n">YY</span><span class="o">.</span><span class="n">square</span><span class="p">())</span>
+                <span class="n">kernel</span> <span class="o">=</span> <span class="n">r</span> <span class="o">&lt;</span> <span class="mi">1</span> <span class="o">/</span> <span class="mi">50</span>
+
+                <span class="n">mask</span> <span class="o">=</span> <span class="n">ifft2c</span><span class="p">(</span><span class="n">fft2c</span><span class="p">(</span><span class="n">mask</span><span class="p">)</span> <span class="o">*</span> <span class="n">fft2c</span><span class="p">(</span><span class="n">kernel</span><span class="p">))</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span>
+
+            <span class="k">case</span><span class="w"> </span><span class="k">_</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s2">&quot;Mode not known&quot;</span><span class="p">)</span>
+
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">mask</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="COM_probe_center">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.loss_functions.COM_probe_center">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">COM_probe_center</span><span class="p">(</span>
+    <span class="n">correlated_dimensions</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LossFunction</span><span class="p">:</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">correlated_dimensions</span><span class="p">,</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="n">correlated_dimensions</span> <span class="o">=</span> <span class="p">[</span><span class="n">correlated_dimensions</span><span class="p">]</span>
+
+    <span class="k">if</span> <span class="n">correlated_dimensions</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">correlated_dimensions</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="nd">@LossFunction</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">inner</span><span class="p">(</span>
+        <span class="n">diff_pattern_set</span><span class="p">:</span> <span class="n">DiffPatternSet</span><span class="p">,</span>
+        <span class="n">esw_detector</span><span class="p">:</span> <span class="n">ESW</span><span class="p">,</span>
+        <span class="n">probe</span><span class="p">:</span> <span class="n">Probe</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">object_patch</span><span class="p">:</span> <span class="n">Object</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">probe</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span>
+        <span class="n">probe_sq</span> <span class="o">=</span> <span class="n">probe</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">square</span><span class="p">()</span>
+        <span class="n">height</span><span class="p">,</span> <span class="n">width</span> <span class="o">=</span> <span class="n">probe</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">:]</span>
+
+        <span class="n">sum_x</span> <span class="o">=</span> <span class="n">probe_sq</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="o">-</span><span class="mi">2</span><span class="p">)</span>
+        <span class="n">sum_y</span> <span class="o">=</span> <span class="n">probe_sq</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+
+        <span class="n">com_x</span> <span class="o">=</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">width</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">probe</span><span class="o">.</span><span class="n">device</span><span class="p">)</span> <span class="o">*</span> <span class="n">sum_x</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span>
+            <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span>
+        <span class="p">)</span> <span class="o">/</span> <span class="n">sum_x</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span>
+            <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span>
+            <span class="n">keepdim</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">com_y</span> <span class="o">=</span> <span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">height</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">probe</span><span class="o">.</span><span class="n">device</span><span class="p">)</span> <span class="o">*</span> <span class="n">sum_y</span><span class="p">)</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span>
+            <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span>
+        <span class="p">)</span> <span class="o">/</span> <span class="n">sum_y</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span>
+            <span class="n">dim</span><span class="o">=-</span><span class="mi">1</span><span class="p">,</span>
+            <span class="n">keepdim</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="n">all_dims</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="n">probe</span><span class="o">.</span><span class="n">dim</span><span class="p">()))</span>
+        <span class="k">for</span> <span class="n">_d</span> <span class="ow">in</span> <span class="n">correlated_dimensions</span><span class="p">:</span>
+            <span class="n">_d_sum</span> <span class="o">=</span> <span class="n">all_dims</span><span class="p">[</span><span class="n">_d</span><span class="p">]</span>
+            <span class="n">com_x</span> <span class="o">=</span> <span class="n">com_x</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">_d_sum</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+            <span class="n">com_y</span> <span class="o">=</span> <span class="n">com_y</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">_d_sum</span><span class="p">,</span> <span class="n">keepdim</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+        <span class="n">shift_x</span> <span class="o">=</span> <span class="n">com_y</span> <span class="o">-</span> <span class="n">height</span> <span class="o">//</span> <span class="mi">2</span>
+        <span class="n">shift_y</span> <span class="o">=</span> <span class="n">com_x</span> <span class="o">-</span> <span class="n">width</span> <span class="o">//</span> <span class="mi">2</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">shift_x</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span> <span class="o">+</span> <span class="n">shift_y</span><span class="o">.</span><span class="n">abs</span><span class="p">())</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+
+    <span class="k">return</span> <span class="n">inner</span></div>
+
+
+
+<div class="viewcode-block" id="same_value">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.loss_functions.same_value">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">same_value</span><span class="p">(</span><span class="n">roi_list</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="n">Roi2D</span><span class="p">],</span> <span class="n">engine</span><span class="p">:</span> <span class="n">AutoGradPIE</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LossFunction</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Enforces all rois to have the same value with respect to each other.&quot;&quot;&quot;</span>
+
+    <span class="nd">@LossFunction</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">same_value</span><span class="p">(</span>
+        <span class="n">diff_pattern_set</span><span class="p">:</span> <span class="n">DiffPatternSet</span><span class="p">,</span>
+        <span class="n">esw_detector</span><span class="p">:</span> <span class="n">ESW</span><span class="p">,</span>
+        <span class="n">probe</span><span class="p">:</span> <span class="n">Probe</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">object_patch</span><span class="p">:</span> <span class="n">Object</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span>
+            <span class="p">[</span><span class="n">engine</span><span class="o">.</span><span class="n">rec_object</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="o">*</span><span class="n">roi</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span> <span class="k">for</span> <span class="n">roi</span> <span class="ow">in</span> <span class="n">roi_list</span><span class="p">]</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">std</span><span class="p">()</span>
+
+    <span class="k">return</span> <span class="n">same_value</span></div>
+
+
+
+<div class="viewcode-block" id="const_indiv_ampl">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.loss_functions.const_indiv_ampl">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">const_indiv_ampl</span><span class="p">(</span><span class="n">roi_list</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="n">Roi2D</span><span class="p">],</span> <span class="n">engine</span><span class="p">:</span> <span class="n">AutoGradPIE</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LossFunction</span><span class="p">:</span>
+    <span class="nd">@LossFunction</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">const_indiv_ampl</span><span class="p">(</span>
+        <span class="n">diff_pattern_set</span><span class="p">:</span> <span class="n">DiffPatternSet</span><span class="p">,</span>
+        <span class="n">esw_detector</span><span class="p">:</span> <span class="n">ESW</span><span class="p">,</span>
+        <span class="n">probe</span><span class="p">:</span> <span class="n">Probe</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">object_patch</span><span class="p">:</span> <span class="n">Object</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span>
+            <span class="p">[</span><span class="n">engine</span><span class="o">.</span><span class="n">rec_object</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="o">*</span><span class="n">roi</span><span class="p">]</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span> <span class="k">for</span> <span class="n">roi</span> <span class="ow">in</span> <span class="n">roi_list</span><span class="p">]</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">std</span><span class="p">()</span>
+
+    <span class="k">return</span> <span class="n">const_indiv_ampl</span></div>
+
+
+
+<div class="viewcode-block" id="const_value_roi">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.loss_functions.const_value_roi">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">const_value_roi</span><span class="p">(</span>
+    <span class="n">roi</span><span class="p">:</span> <span class="n">Roi2D</span><span class="p">,</span>
+    <span class="n">engine</span><span class="p">:</span> <span class="n">AutoGradPIE</span><span class="p">,</span>
+    <span class="n">value</span><span class="p">:</span> <span class="nb">complex</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LossFunction</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Enforces roi to have const value.&quot;&quot;&quot;</span>
+
+    <span class="n">O_mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">engine</span><span class="o">.</span><span class="n">rec_object</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bool</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">engine</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+    <span class="n">O_mask</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="o">*</span><span class="n">roi</span><span class="p">]</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="nd">@LossFunction</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">const_value_roi</span><span class="p">(</span>
+        <span class="n">diff_pattern_set</span><span class="p">:</span> <span class="n">DiffPatternSet</span><span class="p">,</span>
+        <span class="n">esw_detector</span><span class="p">:</span> <span class="n">ESW</span><span class="p">,</span>
+        <span class="n">probe</span><span class="p">:</span> <span class="n">Probe</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">object_patch</span><span class="p">:</span> <span class="n">Object</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">engine</span><span class="o">.</span><span class="n">rec_object</span> <span class="o">*</span> <span class="n">O_mask</span> <span class="o">-</span> <span class="n">value</span><span class="p">)</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span>
+
+    <span class="k">return</span> <span class="n">const_value_roi</span></div>
+
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../index.html">function_list</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../index.html">Documentation overview</a><ul>
+  <li><a href="../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2025, Zhonghui Nie.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 8.2.3</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

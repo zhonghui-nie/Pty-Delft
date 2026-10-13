@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PtychoTorch.encoder &#8212; function_list XXX documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="../../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../../_static/alabaster.css?v=27fed22d" />
+    <script src="../../_static/documentation_options.js?v=22a66780"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+   
+  <link rel="stylesheet" href="../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for PtychoTorch.encoder</h1><div class="highlight"><pre>
+<span></span><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">enum</span><span class="w"> </span><span class="kn">import</span> <span class="n">Enum</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Self</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">h5py</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch._prims_common</span><span class="w"> </span><span class="kn">import</span> <span class="n">DeviceLikeType</span><span class="p">,</span> <span class="n">Tensor</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">PtychoTorch.typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">h5_root</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PtychoTorch.utils</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">check_tensor_dims_equal</span><span class="p">,</span>
+    <span class="n">check_tensor_one_dim</span><span class="p">,</span>
+    <span class="n">dict_to_log_str</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">.propagators.base</span><span class="w"> </span><span class="kn">import</span> <span class="n">BasePropagator</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.save_load</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">SaveLoadHDF5</span><span class="p">,</span>
+    <span class="n">get_read_hdf5_path</span><span class="p">,</span>
+    <span class="n">get_write_hdf5_path</span><span class="p">,</span>
+    <span class="n">tensor_from_h5</span><span class="p">,</span>
+<span class="p">)</span>
+
+
+<div class="viewcode-block" id="Encoder">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.encoder.Encoder">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Encoder</span><span class="p">(</span><span class="n">SaveLoadHDF5</span><span class="p">):</span>
+    <span class="n">H5PY_KEY_CLASS</span> <span class="o">=</span> <span class="s2">&quot;encoder&quot;</span>
+    <span class="n">H5PY_KEY_CLASS_CORR</span> <span class="o">=</span> <span class="s2">&quot;encoder_position_correction&quot;</span>
+    <span class="n">H5PY_KEY_CLASS_CORR_STRETCH_X</span> <span class="o">=</span> <span class="s2">&quot;encoder_position_correction_stretch_x&quot;</span>
+    <span class="n">H5PY_KEY_CLASS_CORR_STRETCH_Y</span> <span class="o">=</span> <span class="s2">&quot;encoder_position_correction_stretch_y&quot;</span>
+
+    <span class="n">Encoder_Mode</span> <span class="o">=</span> <span class="n">Enum</span><span class="p">(</span><span class="s2">&quot;Encoder_Mode&quot;</span><span class="p">,</span> <span class="p">[</span><span class="s2">&quot;CORNER&quot;</span><span class="p">,</span> <span class="s2">&quot;CENTERED&quot;</span><span class="p">])</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">positions</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">mode</span><span class="p">:</span> <span class="n">Encoder_Mode</span> <span class="o">=</span> <span class="n">Encoder_Mode</span><span class="o">.</span><span class="n">CENTERED</span><span class="p">,</span>
+        <span class="n">device</span><span class="p">:</span> <span class="n">DeviceLikeType</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_device</span> <span class="o">=</span> <span class="n">device</span> <span class="ow">or</span> <span class="n">positions</span><span class="o">.</span><span class="n">device</span>
+
+        <span class="n">check_tensor_dims_equal</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="n">check_tensor_one_dim</span><span class="p">(</span><span class="n">positions</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">positions</span><span class="p">:</span> <span class="n">Tensor</span> <span class="o">=</span> <span class="n">positions</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">set_mode</span><span class="p">(</span><span class="n">mode</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">position_correction</span><span class="p">:</span> <span class="n">Tensor</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">position_correction_stretch_x</span><span class="p">:</span> <span class="n">Tensor</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">position_correction_stretch_y</span><span class="p">:</span> <span class="n">Tensor</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">reset_position_correction</span><span class="p">()</span>
+
+<div class="viewcode-block" id="Encoder.reset_position_correction">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.encoder.Encoder.reset_position_correction">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">reset_position_correction</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">position_correction</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span>
+            <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="p">),</span> <span class="mi">2</span><span class="p">),</span>
+            <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="n">device</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">position_correction_stretch_x</span><span class="p">:</span> <span class="n">Tensor</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span>
+            <span class="mf">1.0</span><span class="p">,</span>
+            <span class="n">device</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">,</span>
+            <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">position_correction_stretch_y</span><span class="p">:</span> <span class="n">Tensor</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span>
+            <span class="mf">1.0</span><span class="p">,</span>
+            <span class="n">device</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">,</span>
+            <span class="n">requires_grad</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+        <span class="p">)</span></div>
+
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">device</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DeviceLikeType</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_device</span>
+
+    <span class="nd">@device</span><span class="o">.</span><span class="n">setter</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">device</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">new_device</span><span class="p">:</span> <span class="n">DeviceLikeType</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span>
+
+<div class="viewcode-block" id="Encoder.get_mode">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.encoder.Encoder.get_mode">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_mode</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Encoder_Mode</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Get mode of encoder.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_mode</span></div>
+
+
+<div class="viewcode-block" id="Encoder.set_mode">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.encoder.Encoder.set_mode">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">set_mode</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">new_mode</span><span class="p">:</span> <span class="n">Encoder_Mode</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Set mode of encoder.&quot;&quot;&quot;</span>
+
+        <span class="k">if</span> <span class="n">new_mode</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">Encoder_Mode</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;new_mode must be one of </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">Encoder_Mode</span><span class="o">.</span><span class="n">_member_names_</span><span class="si">}</span><span class="s2">.&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;Found: </span><span class="si">{</span><span class="n">new_mode</span><span class="si">=}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_mode</span> <span class="o">=</span> <span class="n">new_mode</span></div>
+
+
+<div class="viewcode-block" id="Encoder.from_hdf5">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.encoder.Encoder.from_hdf5">[docs]</a>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_hdf5</span><span class="p">(</span>
+        <span class="bp">cls</span><span class="p">,</span>
+        <span class="n">hdf5_root</span><span class="p">:</span> <span class="n">h5_root</span><span class="p">,</span>
+        <span class="n">device</span><span class="p">:</span> <span class="n">DeviceLikeType</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">mode</span><span class="p">:</span> <span class="n">Encoder_Mode</span> <span class="o">=</span> <span class="n">Encoder_Mode</span><span class="o">.</span><span class="n">CENTERED</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Self</span><span class="p">:</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">,</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">os</span><span class="o">.</span><span class="n">PathLike</span><span class="p">):</span>
+            <span class="n">hdf5_root</span> <span class="o">=</span> <span class="n">get_read_hdf5_path</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">)</span>
+        <span class="c1"># check if hdf5_root is a path (&#39;path_to_file.hdf5&#39;)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">,</span> <span class="n">h5py</span><span class="o">.</span><span class="n">Group</span><span class="p">):</span>
+            <span class="k">with</span> <span class="n">h5py</span><span class="o">.</span><span class="n">File</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                <span class="k">return</span> <span class="bp">cls</span><span class="o">.</span><span class="n">from_hdf5</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">device</span> <span class="ow">or</span> <span class="n">torch</span><span class="o">.</span><span class="n">cpu</span><span class="o">.</span><span class="n">current_device</span><span class="p">()</span>
+
+        <span class="n">positions</span> <span class="o">=</span> <span class="n">tensor_from_h5</span><span class="p">(</span>
+            <span class="n">hdf5_root</span><span class="p">,</span>
+            <span class="bp">cls</span><span class="o">.</span><span class="n">H5PY_KEY_CLASS</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">positions</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s2">&quot;Positions not found&quot;</span><span class="p">)</span>
+
+        <span class="n">ret</span> <span class="o">=</span> <span class="bp">cls</span><span class="p">(</span><span class="n">positions</span><span class="o">=</span><span class="n">positions</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="n">mode</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="n">pos_cor</span> <span class="o">=</span> <span class="n">tensor_from_h5</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">,</span> <span class="bp">cls</span><span class="o">.</span><span class="n">H5PY_KEY_CLASS_CORR</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">pos_cor</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">pos_cor</span> <span class="o">=</span> <span class="n">pos_cor</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+            <span class="n">pos_cor</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">()</span>
+            <span class="n">ret</span><span class="o">.</span><span class="n">position_correction</span> <span class="o">=</span> <span class="n">pos_cor</span>
+
+        <span class="n">sx</span> <span class="o">=</span> <span class="n">tensor_from_h5</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">,</span> <span class="bp">cls</span><span class="o">.</span><span class="n">H5PY_KEY_CLASS_CORR_STRETCH_X</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">sx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">sx</span> <span class="o">=</span> <span class="n">sx</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+            <span class="n">sx</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">()</span>
+            <span class="n">ret</span><span class="o">.</span><span class="n">position_correction_stretch_x</span> <span class="o">=</span> <span class="n">sx</span>
+
+        <span class="n">sy</span> <span class="o">=</span> <span class="n">tensor_from_h5</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">,</span> <span class="bp">cls</span><span class="o">.</span><span class="n">H5PY_KEY_CLASS_CORR_STRETCH_Y</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">sy</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">sy</span> <span class="o">=</span> <span class="n">sy</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+            <span class="n">sy</span><span class="o">.</span><span class="n">requires_grad_</span><span class="p">()</span>
+            <span class="n">ret</span><span class="o">.</span><span class="n">position_correction_stretch_y</span> <span class="o">=</span> <span class="n">sy</span>
+
+        <span class="k">return</span> <span class="n">ret</span></div>
+
+
+<div class="viewcode-block" id="Encoder.save_hdf5">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.encoder.Encoder.save_hdf5">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">save_hdf5</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">hdf5_root</span><span class="p">:</span> <span class="n">h5_root</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">,</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">os</span><span class="o">.</span><span class="n">PathLike</span><span class="p">):</span>
+            <span class="n">hdf5_root</span> <span class="o">=</span> <span class="n">get_write_hdf5_path</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">)</span>
+        <span class="c1"># check if hdf5_root is a path (&#39;path_to_file.hdf5&#39;)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">,</span> <span class="n">h5py</span><span class="o">.</span><span class="n">Group</span><span class="p">):</span>
+            <span class="k">with</span> <span class="n">h5py</span><span class="o">.</span><span class="n">File</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">save_hdf5</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+
+        <span class="n">hdf5_root</span><span class="o">.</span><span class="n">create_dataset</span><span class="p">(</span>  <span class="c1"># pyright: ignore[reportUnknownMemberType]</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">H5PY_KEY_CLASS</span><span class="p">,</span>
+            <span class="n">data</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">positions</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+        <span class="p">)</span>
+
+        <span class="n">hdf5_root</span><span class="o">.</span><span class="n">create_dataset</span><span class="p">(</span>  <span class="c1"># pyright: ignore[reportUnknownMemberType]</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">H5PY_KEY_CLASS_CORR</span><span class="p">,</span>
+            <span class="n">data</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">position_correction</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">(),</span>
+        <span class="p">)</span>
+
+        <span class="n">hdf5_root</span><span class="o">.</span><span class="n">create_dataset</span><span class="p">(</span>  <span class="c1"># pyright: ignore[reportUnknownMemberType]</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">H5PY_KEY_CLASS_CORR_STRETCH_X</span><span class="p">,</span>
+            <span class="n">data</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">position_correction_stretch_x</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">(),</span>
+        <span class="p">)</span>
+
+        <span class="n">hdf5_root</span><span class="o">.</span><span class="n">create_dataset</span><span class="p">(</span>  <span class="c1"># pyright: ignore[reportUnknownMemberType]</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">H5PY_KEY_CLASS_CORR_STRETCH_Y</span><span class="p">,</span>
+            <span class="n">data</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">position_correction_stretch_y</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">(),</span>
+        <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Encoder.from_scanposition_csv">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.encoder.Encoder.from_scanposition_csv">[docs]</a>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_scanposition_csv</span><span class="p">(</span>
+        <span class="bp">cls</span><span class="p">,</span>
+        <span class="n">filepath</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">os</span><span class="o">.</span><span class="n">PathLike</span><span class="p">[</span><span class="n">Any</span><span class="p">],</span>
+        <span class="n">mode</span><span class="p">:</span> <span class="n">Encoder_Mode</span> <span class="o">=</span> <span class="n">Encoder_Mode</span><span class="o">.</span><span class="n">CENTERED</span><span class="p">,</span>
+        <span class="n">device</span><span class="p">:</span> <span class="n">DeviceLikeType</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns Encoder-instance with loaded positions.</span>
+
+<span class="sd">        Assumes csv-file contains positions in [um].</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Encoder</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+
+        <span class="n">header_length</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">filepath</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="k">while</span> <span class="n">line</span> <span class="o">:=</span> <span class="n">f</span><span class="o">.</span><span class="n">readline</span><span class="p">():</span>
+                <span class="k">if</span> <span class="n">line</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">isdigit</span><span class="p">()</span> <span class="ow">or</span> <span class="n">line</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="s2">&quot;-&quot;</span><span class="p">:</span>
+                    <span class="k">break</span>
+
+                <span class="n">header_length</span> <span class="o">+=</span> <span class="mi">1</span>
+
+        <span class="n">df</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">read_csv</span><span class="p">(</span>  <span class="c1"># type: ignore</span>
+            <span class="n">filepath</span><span class="p">,</span>
+            <span class="n">skiprows</span><span class="o">=</span><span class="n">header_length</span><span class="p">,</span>
+            <span class="n">delimiter</span><span class="o">=</span><span class="s2">&quot; &quot;</span><span class="p">,</span>
+            <span class="n">names</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;y&quot;</span><span class="p">,</span> <span class="s2">&quot;x&quot;</span><span class="p">],</span>
+        <span class="p">)</span>
+        <span class="n">positions</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">to_numpy</span><span class="p">())</span> <span class="o">*</span> <span class="mf">1e-6</span>  <span class="c1"># assumes positions in um</span>
+        <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span><span class="n">positions</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Encoder.to_scanposition_csv">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.encoder.Encoder.to_scanposition_csv">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_scanposition_csv</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">filepath</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Saves positions to csv-file.</span>
+
+<span class="sd">        Saves with default stepsize of 1um.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            filepath (str): Path to</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">positions_numpy</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">positions</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+        <span class="n">df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">positions_numpy</span> <span class="o">/</span> <span class="mf">1e-6</span><span class="p">)</span>
+
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">filepath</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">,</span> <span class="n">newline</span><span class="o">=</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">file</span><span class="p">:</span>
+            <span class="n">file</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;number of positions: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">df</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="n">file</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\r\n</span><span class="s2">y (row) [um] | x (col) [um]</span><span class="se">\r\n</span><span class="s2">&quot;</span><span class="p">)</span>
+            <span class="n">df</span><span class="o">.</span><span class="n">to_csv</span><span class="p">(</span><span class="n">file</span><span class="p">,</span> <span class="n">header</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">index</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">sep</span><span class="o">=</span><span class="s2">&quot; &quot;</span><span class="p">)</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__len__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">positions</span><span class="p">)</span>
+
+<div class="viewcode-block" id="Encoder.get_postition_SI">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.encoder.Encoder.get_postition_SI">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_postition_SI</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">index</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">slice</span><span class="p">,</span> <span class="n">corrected</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">corrected</span> <span class="ow">is</span> <span class="kc">False</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">positions</span><span class="p">[</span><span class="n">index</span><span class="p">]</span>
+
+        <span class="n">check_tensor_dims_equal</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">position_correction_stretch_x</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="n">check_tensor_dims_equal</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">position_correction_stretch_y</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+
+        <span class="n">stretch</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span>
+            <span class="p">[</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">position_correction_stretch_y</span><span class="p">,</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">position_correction_stretch_x</span><span class="p">,</span>
+            <span class="p">]</span>
+        <span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">positions</span><span class="p">[</span><span class="n">index</span><span class="p">]</span> <span class="o">*</span> <span class="n">stretch</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">position_correction</span><span class="p">[:,</span> <span class="n">index</span><span class="p">,</span> <span class="p">:]</span></div>
+
+
+<div class="viewcode-block" id="Encoder.generate_mask_radius">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.encoder.Encoder.generate_mask_radius">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">generate_mask_radius</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">radius_m</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Generate mask based on radius.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            radius_m (float): Set radius for datapoints to consider</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Booelan mask, where the indices of scanpositions within the given radius</span>
+<span class="sd">                are set to True.</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">mask</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">vector_norm</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">positions</span><span class="p">,</span> <span class="n">dim</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span> <span class="o">&lt;=</span> <span class="n">radius_m</span>  <span class="c1"># type:ignore</span>
+        <span class="k">return</span> <span class="n">mask</span>  <span class="c1"># type:ignore</span></div>
+
+
+<div class="viewcode-block" id="Encoder.get_position_px">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.encoder.Encoder.get_position_px">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_position_px</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">scan_position_SI</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">prop</span><span class="p">:</span> <span class="n">BasePropagator</span><span class="p">,</span>
+        <span class="n">object_shape</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Size</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns coordinates at given index in rasterized pixel-coordinates.</span>
+
+<span class="sd">        Left-most and top-most scanning-positions are alligned to the left and top edge</span>
+<span class="sd">        of the Object. Thus, the scanning-position (0,0) will in most cases not end up</span>
+<span class="sd">        in the center of the Object.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            scan_position_SI: Scanning position [m]. Dimensions: (N_modes, 2).</span>
+<span class="sd">            prop: Propagator, required to get pixel size in sample-plane.</span>
+<span class="sd">            object_shape: Shape of whole object. Required if Encoder is using</span>
+<span class="sd">                `Encoder_Mode.CENTERED`.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            (N_modes, Y, X) positions of object patch in pixels</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">offset_px</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_mode</span><span class="p">()</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">Encoder_Mode</span><span class="o">.</span><span class="n">CORNER</span><span class="p">:</span>
+            <span class="n">min_position</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">positions</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="n">dim</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+            <span class="n">offset_px</span> <span class="o">=</span> <span class="n">min_position</span> <span class="o">/</span> <span class="n">prop</span><span class="o">.</span><span class="n">dx</span>
+
+        <span class="k">elif</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_mode</span><span class="p">()</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">Encoder_Mode</span><span class="o">.</span><span class="n">CENTERED</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">object_shape</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;object_shape required for mode=&#39;{self.get_mode()}&#39;&quot;</span><span class="p">)</span>
+
+            <span class="n">center_probe</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">prop</span><span class="o">.</span><span class="n">probe_shape</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">positions</span><span class="o">.</span><span class="n">device</span><span class="p">)[</span><span class="o">-</span><span class="mi">2</span><span class="p">:]</span> <span class="o">/</span> <span class="mi">2</span>
+            <span class="p">)</span>
+            <span class="n">center_obj</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">object_shape</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">positions</span><span class="o">.</span><span class="n">device</span><span class="p">)[</span><span class="o">-</span><span class="mi">2</span><span class="p">:]</span> <span class="o">/</span> <span class="mi">2</span>
+            <span class="p">)</span>
+            <span class="n">offset_px</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">center_probe</span> <span class="o">-</span> <span class="n">center_obj</span><span class="p">)</span>
+
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;Encoder mode not implemented&quot;</span><span class="p">)</span>
+
+        <span class="n">ret</span> <span class="o">=</span> <span class="n">scan_position_SI</span> <span class="o">/</span> <span class="n">prop</span><span class="o">.</span><span class="n">dx</span> <span class="o">-</span> <span class="n">offset_px</span>
+        <span class="k">return</span> <span class="n">ret</span></div>
+
+
+<div class="viewcode-block" id="Encoder.find_minimal_object_shape_px">
+<a class="viewcode-back" href="../../PtychoTorch.html#PtychoTorch.encoder.Encoder.find_minimal_object_shape_px">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">find_minimal_object_shape_px</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">prop</span><span class="p">:</span> <span class="n">BasePropagator</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Size</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Returns minimal shape that the object needs to have.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            probe (torch.Tensor): Probe-Tensor.</span>
+<span class="sd">            dx (float): Pixelsize of probe.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            tuple[int, int]: Minimal height and width for the object.</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+
+        <span class="n">x_max</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">positions</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">])</span>
+        <span class="n">x_min</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">positions</span><span class="p">[:,</span> <span class="mi">1</span><span class="p">])</span>
+        <span class="n">y_max</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">positions</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">])</span>
+        <span class="n">y_min</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">min</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">positions</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">])</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_mode</span><span class="p">()</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">Encoder_Mode</span><span class="o">.</span><span class="n">CORNER</span><span class="p">:</span>
+            <span class="n">obj_shape</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">prop</span><span class="o">.</span><span class="n">probe_shape</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">int</span><span class="p">)</span>
+            <span class="n">obj_shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="nb">int</span><span class="p">((</span><span class="n">y_max</span> <span class="o">-</span> <span class="n">y_min</span><span class="p">)</span> <span class="o">/</span> <span class="n">prop</span><span class="o">.</span><span class="n">dx</span> <span class="o">+</span> <span class="n">prop</span><span class="o">.</span><span class="n">probe_shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">])</span>
+            <span class="n">obj_shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="nb">int</span><span class="p">((</span><span class="n">x_max</span> <span class="o">-</span> <span class="n">x_min</span><span class="p">)</span> <span class="o">/</span> <span class="n">prop</span><span class="o">.</span><span class="n">dx</span> <span class="o">+</span> <span class="n">prop</span><span class="o">.</span><span class="n">probe_shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>
+            <span class="n">obj_shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">:]</span> <span class="o">+=</span> <span class="mi">1</span>  <span class="c1"># add one extra pixel to deal with rounding issues</span>
+
+        <span class="k">elif</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_mode</span><span class="p">()</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">Encoder_Mode</span><span class="o">.</span><span class="n">CENTERED</span><span class="p">:</span>
+            <span class="n">height</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="n">y_min</span><span class="p">,</span> <span class="n">y_max</span><span class="p">])</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">*</span> <span class="mi">2</span> <span class="o">/</span> <span class="n">prop</span><span class="o">.</span><span class="n">dx</span>
+                <span class="o">+</span> <span class="n">prop</span><span class="o">.</span><span class="n">probe_shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span>
+            <span class="p">)</span>
+            <span class="n">width</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">([</span><span class="n">x_min</span><span class="p">,</span> <span class="n">x_max</span><span class="p">])</span><span class="o">.</span><span class="n">abs</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">()</span> <span class="o">*</span> <span class="mi">2</span> <span class="o">/</span> <span class="n">prop</span><span class="o">.</span><span class="n">dx</span>
+                <span class="o">+</span> <span class="n">prop</span><span class="o">.</span><span class="n">probe_shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+            <span class="p">)</span>
+            <span class="n">obj_shape</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">stack</span><span class="p">((</span><span class="n">height</span><span class="p">,</span> <span class="n">width</span><span class="p">))</span><span class="o">.</span><span class="n">ceil</span><span class="p">()</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">int</span><span class="p">)</span>
+
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
+                <span class="s2">&quot;find_minimal_object_shape_px only works for&quot;</span>
+                <span class="s2">&quot;mode=&#39;Encoder_Mode.CORNER&#39; and mode=&#39;Encoder_Mode.CENTERED&#39;&quot;</span>
+            <span class="p">)</span>
+
+        <span class="n">H</span><span class="p">,</span> <span class="n">W</span> <span class="o">=</span> <span class="n">obj_shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span> <span class="n">obj_shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">Size</span><span class="p">((</span><span class="nb">int</span><span class="p">(</span><span class="n">H</span><span class="p">),</span> <span class="nb">int</span><span class="p">(</span><span class="n">W</span><span class="p">)))</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__str__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="n">title</span> <span class="o">=</span> <span class="s2">&quot;Encoder:&quot;</span>
+        <span class="n">key_dict</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;Mode&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_mode</span><span class="p">()</span><span class="o">.</span><span class="n">name</span><span class="p">}</span>
+        <span class="k">return</span> <span class="n">dict_to_log_str</span><span class="p">(</span><span class="n">title</span><span class="p">,</span> <span class="n">key_dict</span><span class="p">)</span></div>
+
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../index.html">function_list</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../index.html">Documentation overview</a><ul>
+  <li><a href="../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2025, Zhonghui Nie.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 8.2.3</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PtychoTorch.propagators.base &#8212; function_list XXX documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css?v=27fed22d" />
+    <script src="../../../_static/documentation_options.js?v=22a66780"></script>
+    <script src="../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+   
+  <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for PtychoTorch.propagators.base</h1><div class="highlight"><pre>
+<span></span><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">ABC</span><span class="p">,</span> <span class="n">abstractmethod</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">TYPE_CHECKING</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">NewType</span><span class="p">,</span> <span class="n">Self</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">h5py</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch</span><span class="w"> </span><span class="kn">import</span> <span class="n">Size</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">torch._prims_common</span><span class="w"> </span><span class="kn">import</span> <span class="n">DeviceLikeType</span><span class="p">,</span> <span class="n">Tensor</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">PtychoTorch.save_load</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">H5PY_Const</span><span class="p">,</span>
+    <span class="n">SaveLoadHDF5</span><span class="p">,</span>
+    <span class="n">float_from_h5</span><span class="p">,</span>
+    <span class="n">get_read_hdf5_path</span><span class="p">,</span>
+    <span class="n">get_write_hdf5_path</span><span class="p">,</span>
+    <span class="n">tensor_from_h5</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">..dataset</span><span class="w"> </span><span class="kn">import</span> <span class="n">DataSet</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="n">DataSet</span> <span class="o">=</span> <span class="n">Any</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">..typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">ESW</span><span class="p">,</span> <span class="n">TF</span><span class="p">,</span> <span class="n">TFL</span><span class="p">,</span> <span class="n">DiffPatternSet</span><span class="p">,</span> <span class="n">h5_root</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">check_tensor_dims_equal</span><span class="p">,</span> <span class="n">dict_to_log_str</span>
+
+
+<div class="viewcode-block" id="NA_diffraction_limit">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.base.NA_diffraction_limit">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">NA_diffraction_limit</span><span class="p">(</span>
+    <span class="n">dq</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">z</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">wavelength</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+    <span class="n">n_pixels_detector</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Calculate pixel size.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        dq: Pixel size of detector (m)</span>
+<span class="sd">        z: Propagation distance (m)</span>
+<span class="sd">        n_pixel_detector: Pixels along one axis of detector</span>
+
+<span class="sd">    Raises:</span>
+<span class="sd">        Exception: Only works with squared Probe</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">Ld</span> <span class="o">=</span> <span class="n">dq</span> <span class="o">*</span> <span class="n">n_pixels_detector</span>
+    <span class="n">dx</span> <span class="o">=</span> <span class="n">wavelength</span> <span class="o">*</span> <span class="n">z</span> <span class="o">/</span> <span class="n">Ld</span>
+    <span class="k">return</span> <span class="n">dx</span></div>
+
+
+
+<div class="viewcode-block" id="BasePropagator">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.base.BasePropagator">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">BasePropagator</span><span class="p">(</span><span class="n">SaveLoadHDF5</span><span class="p">,</span> <span class="n">ABC</span><span class="p">):</span>
+    <span class="n">H5PY_ATTR_SAMPLE_PIXEL_SIZE</span> <span class="o">=</span> <span class="s2">&quot;dx&quot;</span>
+    <span class="n">H5PY_ATTR_CAMERA_PIXEL_SIZE</span> <span class="o">=</span> <span class="s2">&quot;dq&quot;</span>
+    <span class="n">H5PY_ATTR_DISTANCE_TO_CAMERA</span> <span class="o">=</span> <span class="s2">&quot;z&quot;</span>
+    <span class="n">H5PY_KEY_WAVELENGTH</span> <span class="o">=</span> <span class="s2">&quot;wavelength&quot;</span>
+    <span class="n">H5PY_KEY_PROBE_SHAPE</span> <span class="o">=</span> <span class="s2">&quot;probe_shape&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">dx</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">dq</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">z</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">wavelength</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">probe_shape</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Size</span><span class="p">,</span>
+        <span class="n">device</span><span class="p">:</span> <span class="n">DeviceLikeType</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_device</span> <span class="o">=</span> <span class="n">device</span> <span class="ow">or</span> <span class="n">wavelength</span><span class="o">.</span><span class="n">device</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">dx</span> <span class="o">=</span> <span class="n">dx</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">dq</span> <span class="o">=</span> <span class="n">dq</span>
+        <span class="n">check_tensor_dims_equal</span><span class="p">(</span><span class="n">z</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">z</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_check_tensor</span><span class="p">(</span><span class="n">z</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">wavelength</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_check_tensor</span><span class="p">(</span><span class="n">wavelength</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">probe_shape</span> <span class="o">=</span> <span class="n">probe_shape</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_check_tensor</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">TFL</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tensor</span><span class="p">:</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">torch</span><span class="o">.</span><span class="n">is_tensor</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
+            <span class="n">x</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">x</span><span class="o">.</span><span class="n">device</span> <span class="o">!=</span> <span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">:</span>
+            <span class="n">x</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">device</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">x</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_check_float</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">TFL</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">torch</span><span class="o">.</span><span class="n">is_tensor</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
+            <span class="k">if</span> <span class="n">x</span><span class="o">.</span><span class="n">numel</span><span class="p">()</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s2">&quot;Expected only single element&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">x</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+        <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s2">&quot;Expected only single element&quot;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">x</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+        <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="nb">float</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">x</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Expected float or tensor, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">device</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DeviceLikeType</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_device</span>
+
+    <span class="nd">@device</span><span class="o">.</span><span class="n">setter</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">device</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">new_device</span><span class="p">:</span> <span class="n">DeviceLikeType</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">probe_shape</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Size</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Shape of Probe.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_probe_shape</span>
+
+    <span class="nd">@probe_shape</span><span class="o">.</span><span class="n">setter</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">probe_shape</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">new_probe_shape</span><span class="p">:</span> <span class="n">Size</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_probe_shape</span> <span class="o">=</span> <span class="n">new_probe_shape</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">dx</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Pixelsize [m] in PO-plane.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_dx</span>
+
+    <span class="nd">@dx</span><span class="o">.</span><span class="n">setter</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">dx</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">new_dx</span><span class="p">:</span> <span class="n">TFL</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_dx</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_check_float</span><span class="p">(</span><span class="n">new_dx</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">dq</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Pixelsize [m] in detector-plane.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_dq</span>
+
+    <span class="nd">@dq</span><span class="o">.</span><span class="n">setter</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">dq</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">new_dq</span><span class="p">:</span> <span class="nb">float</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_dq</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_check_float</span><span class="p">(</span><span class="n">new_dq</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">z</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Distance [m] to camera.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_z</span>
+
+    <span class="nd">@z</span><span class="o">.</span><span class="n">setter</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">z</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">new_z</span><span class="p">:</span> <span class="n">TFL</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_z</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_check_tensor</span><span class="p">(</span><span class="n">new_z</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">wavelength</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Wavelength [m]&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_wavelength</span>
+
+    <span class="nd">@wavelength</span><span class="o">.</span><span class="n">setter</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">wavelength</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">new_wavelength</span><span class="p">:</span> <span class="n">TFL</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_wavelength</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_check_tensor</span><span class="p">(</span><span class="n">new_wavelength</span><span class="p">)</span>
+
+<div class="viewcode-block" id="BasePropagator.class_propagate">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.base.BasePropagator.class_propagate">[docs]</a>
+    <span class="nd">@staticmethod</span>
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">class_propagate</span><span class="p">(</span>
+        <span class="n">u</span><span class="p">:</span> <span class="n">ESW</span><span class="p">,</span>
+        <span class="n">dx</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">dq</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">z</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">wavelength</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">diff_pattern_set</span><span class="p">:</span> <span class="n">DiffPatternSet</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ESW</span><span class="p">:</span>
+        <span class="k">pass</span></div>
+
+
+<div class="viewcode-block" id="BasePropagator.propagate">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.base.BasePropagator.propagate">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">propagate</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">u</span><span class="p">:</span> <span class="n">ESW</span><span class="p">,</span>
+        <span class="n">diff_pattern_set</span><span class="p">:</span> <span class="n">DiffPatternSet</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ESW</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">class_propagate</span><span class="p">(</span>
+            <span class="n">u</span><span class="o">=</span><span class="n">u</span><span class="p">,</span>
+            <span class="n">dx</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">dx</span><span class="p">,</span>
+            <span class="n">dq</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">dq</span><span class="p">,</span>
+            <span class="n">z</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">z</span><span class="p">,</span>
+            <span class="n">wavelength</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">wavelength</span><span class="p">,</span>
+            <span class="n">diff_pattern_set</span><span class="o">=</span><span class="n">diff_pattern_set</span><span class="p">,</span>
+        <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="BasePropagator.calc_detector_crop_shape">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.base.BasePropagator.calc_detector_crop_shape">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">calc_detector_crop_shape</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">binning_factor</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Size</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Calculate shape of cropped detector, based on binning.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            binning_factor: Binning of Engine</span>
+
+<span class="sd">        Convention to read diffraction patterns is to first crop them</span>
+<span class="sd">        (effectively changing sampling of P Object) followed by binning</span>
+<span class="sd">        (effectively changing FOV of Probe/Object).</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">H</span><span class="p">,</span> <span class="n">W</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">probe_shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">:]</span>
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">Size</span><span class="p">((</span><span class="n">H</span> <span class="o">*</span> <span class="n">binning_factor</span><span class="p">,</span> <span class="n">W</span> <span class="o">*</span> <span class="n">binning_factor</span><span class="p">))</span></div>
+
+
+<div class="viewcode-block" id="BasePropagator.check_compatibility_with_dataset">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.base.BasePropagator.check_compatibility_with_dataset">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">check_compatibility_with_dataset</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">dataset</span><span class="p">:</span> <span class="n">DataSet</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Check if propagator is compatible with dataset.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">dataset</span><span class="o">.</span><span class="n">camera_pixel_size</span> <span class="o">!=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dq</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;camera_pixel_size </span><span class="si">{</span><span class="n">dataset</span><span class="o">.</span><span class="n">camera_pixel_size</span><span class="si">}</span><span class="s2"> does not match</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;propagator.dq </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">dq</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">dataset</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">:]</span> <span class="o">!=</span> <span class="bp">self</span><span class="o">.</span><span class="n">probe_shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">:]:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;ptychogram shape </span><span class="si">{</span><span class="n">dataset</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">2</span><span class="p">:]</span><span class="si">}</span><span class="s2"> does not match</span><span class="se">\n</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot;propagator.probe_shape </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">probe_shape</span><span class="p">[</span><span class="o">-</span><span class="mi">3</span><span class="p">:]</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="BasePropagator.save_hdf5">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.base.BasePropagator.save_hdf5">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">save_hdf5</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">hdf5_root</span><span class="p">:</span> <span class="n">h5_root</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">,</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">os</span><span class="o">.</span><span class="n">PathLike</span><span class="p">):</span>
+            <span class="n">hdf5_root</span> <span class="o">=</span> <span class="n">get_write_hdf5_path</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">)</span>
+        <span class="c1"># check if hdf5_root is a path (&#39;path_to_file.hdf5&#39;)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">,</span> <span class="n">h5py</span><span class="o">.</span><span class="n">Group</span><span class="p">):</span>
+            <span class="k">with</span> <span class="n">h5py</span><span class="o">.</span><span class="n">File</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">,</span> <span class="s2">&quot;w&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">save_hdf5</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+
+        <span class="n">hdf5_root</span><span class="o">.</span><span class="n">attrs</span><span class="p">[</span><span class="n">H5PY_Const</span><span class="o">.</span><span class="n">ATTR_KEY_CLASS</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_save_hdf5</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">)</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_save_hdf5</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">hdf5_root</span><span class="p">:</span> <span class="n">h5py</span><span class="o">.</span><span class="n">Group</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">hdf5_root</span><span class="o">.</span><span class="n">attrs</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">H5PY_ATTR_SAMPLE_PIXEL_SIZE</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dx</span>
+        <span class="n">hdf5_root</span><span class="o">.</span><span class="n">attrs</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">H5PY_ATTR_CAMERA_PIXEL_SIZE</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dq</span>
+        <span class="n">hdf5_root</span><span class="o">.</span><span class="n">attrs</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">H5PY_ATTR_DISTANCE_TO_CAMERA</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">z</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+
+        <span class="n">hdf5_root</span><span class="o">.</span><span class="n">create_dataset</span><span class="p">(</span>  <span class="c1"># pyright: ignore[ reportUnknownMemberType ]</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">H5PY_KEY_WAVELENGTH</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">wavelength</span><span class="o">.</span><span class="n">cpu</span><span class="p">()</span><span class="o">.</span><span class="n">detach</span><span class="p">()</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>
+        <span class="p">)</span>
+        <span class="n">hdf5_root</span><span class="o">.</span><span class="n">create_dataset</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">H5PY_KEY_PROBE_SHAPE</span><span class="p">,</span> <span class="n">data</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">probe_shape</span><span class="p">)</span>  <span class="c1"># pyright: ignore[ reportUnknownMemberType ]</span>
+
+<div class="viewcode-block" id="BasePropagator.from_hdf5">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.base.BasePropagator.from_hdf5">[docs]</a>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">from_hdf5</span><span class="p">(</span>
+        <span class="bp">cls</span><span class="p">,</span>
+        <span class="n">hdf5_root</span><span class="p">:</span> <span class="n">h5_root</span><span class="p">,</span>
+        <span class="n">device</span><span class="p">:</span> <span class="n">DeviceLikeType</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Self</span><span class="p">:</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">,</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">os</span><span class="o">.</span><span class="n">PathLike</span><span class="p">):</span>
+            <span class="n">hdf5_root</span> <span class="o">=</span> <span class="n">get_read_hdf5_path</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">)</span>
+        <span class="c1"># check if hdf5_root is a path (&#39;path_to_file.hdf5&#39;)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">,</span> <span class="n">h5py</span><span class="o">.</span><span class="n">Group</span><span class="p">):</span>
+            <span class="k">with</span> <span class="n">h5py</span><span class="o">.</span><span class="n">File</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">,</span> <span class="s2">&quot;r&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+                <span class="k">return</span> <span class="bp">cls</span><span class="o">.</span><span class="n">from_hdf5</span><span class="p">(</span><span class="n">hdf5_root</span><span class="o">=</span><span class="n">f</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">cls</span><span class="o">.</span><span class="n">_from_hdf5</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span></div>
+
+
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_from_hdf5</span><span class="p">(</span>
+        <span class="bp">cls</span><span class="p">,</span>
+        <span class="n">hdf5_root</span><span class="p">:</span> <span class="n">h5py</span><span class="o">.</span><span class="n">Group</span><span class="p">,</span>
+        <span class="n">device</span><span class="p">:</span> <span class="n">DeviceLikeType</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Self</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">device</span> <span class="ow">or</span> <span class="n">torch</span><span class="o">.</span><span class="n">cpu</span><span class="o">.</span><span class="n">current_device</span><span class="p">()</span>
+
+        <span class="n">dx</span> <span class="o">=</span> <span class="n">float_from_h5</span><span class="p">(</span><span class="n">hdf5_root</span><span class="o">.</span><span class="n">attrs</span><span class="p">,</span> <span class="bp">cls</span><span class="o">.</span><span class="n">H5PY_ATTR_SAMPLE_PIXEL_SIZE</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">dx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s2">&quot;dx not found in hdf5 file.&quot;</span><span class="p">)</span>
+
+        <span class="n">dq</span> <span class="o">=</span> <span class="n">float_from_h5</span><span class="p">(</span><span class="n">hdf5_root</span><span class="o">.</span><span class="n">attrs</span><span class="p">,</span> <span class="bp">cls</span><span class="o">.</span><span class="n">H5PY_ATTR_CAMERA_PIXEL_SIZE</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">dq</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s2">&quot;dq not found in hdf5 file.&quot;</span><span class="p">)</span>
+
+        <span class="n">z</span> <span class="o">=</span> <span class="n">tensor_from_h5</span><span class="p">(</span><span class="n">hdf5_root</span><span class="o">.</span><span class="n">attrs</span><span class="p">,</span> <span class="bp">cls</span><span class="o">.</span><span class="n">H5PY_ATTR_DISTANCE_TO_CAMERA</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">z</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s2">&quot;z not found in hdf5 file.&quot;</span><span class="p">)</span>
+        <span class="n">z</span> <span class="o">=</span> <span class="n">z</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="n">wavelength</span> <span class="o">=</span> <span class="n">tensor_from_h5</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">,</span> <span class="bp">cls</span><span class="o">.</span><span class="n">H5PY_KEY_WAVELENGTH</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">wavelength</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s2">&quot;wavelength not found.&quot;</span><span class="p">)</span>
+        <span class="n">wavelength</span> <span class="o">=</span> <span class="n">wavelength</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="n">probe_shape_tens</span> <span class="o">=</span> <span class="n">tensor_from_h5</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">,</span> <span class="bp">cls</span><span class="o">.</span><span class="n">H5PY_KEY_PROBE_SHAPE</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">probe_shape_tens</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s2">&quot;probe_shape not found&quot;</span><span class="p">)</span>
+
+        <span class="n">probe_shape</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">Size</span><span class="p">(</span><span class="n">probe_shape_tens</span><span class="o">.</span><span class="n">int</span><span class="p">()</span><span class="o">.</span><span class="n">tolist</span><span class="p">())</span>  <span class="c1"># pyright: ignore[reportUnknownArgumentType,reportUnknownMemberType]</span>
+        <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span>
+            <span class="n">dx</span><span class="o">=</span><span class="n">dx</span><span class="p">,</span>
+            <span class="n">dq</span><span class="o">=</span><span class="n">dq</span><span class="p">,</span>
+            <span class="n">z</span><span class="o">=</span><span class="n">z</span><span class="p">,</span>
+            <span class="n">wavelength</span><span class="o">=</span><span class="n">wavelength</span><span class="p">,</span>
+            <span class="n">probe_shape</span><span class="o">=</span><span class="n">probe_shape</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__str__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="n">title</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Propagator: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="vm">__class__</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">&quot;</span>
+
+        <span class="n">key_dict</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Tensor</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">float</span> <span class="o">|</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s2">&quot;dx&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">dx</span><span class="p">,</span>
+            <span class="s2">&quot;dq&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">dq</span><span class="p">,</span>
+            <span class="s2">&quot;z&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">z</span><span class="p">,</span>
+            <span class="s2">&quot;wavelength&quot;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">wavelength</span><span class="p">,</span>
+            <span class="s2">&quot;probe-shape&quot;</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">probe_shape</span><span class="p">),</span>
+        <span class="p">}</span>
+
+        <span class="k">return</span> <span class="n">dict_to_log_str</span><span class="p">(</span><span class="n">title</span><span class="p">,</span> <span class="n">key_dict</span><span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="BaseReflectionPropagator">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.base.BaseReflectionPropagator">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">BaseReflectionPropagator</span><span class="p">(</span><span class="n">BasePropagator</span><span class="p">):</span>
+    <span class="n">H5PY_ATTR_AOI_RAD</span> <span class="o">=</span> <span class="s2">&quot;AOI_rad&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">dx</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">dq</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">z</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">wavelength</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">AOI_rad</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">probe_shape</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Size</span><span class="p">,</span>
+        <span class="n">device</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">dx</span><span class="p">,</span> <span class="n">dq</span><span class="p">,</span> <span class="n">z</span><span class="p">,</span> <span class="n">wavelength</span><span class="p">,</span> <span class="n">probe_shape</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+        <span class="n">check_tensor_dims_equal</span><span class="p">(</span><span class="n">AOI_rad</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">AOI_rad</span> <span class="o">=</span> <span class="n">AOI_rad</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">AOI_rad</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_check_tensor</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_aoi_rad</span><span class="p">)</span>
+
+    <span class="nd">@AOI_rad</span><span class="o">.</span><span class="n">setter</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">AOI_rad</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">new_aoi_rad</span><span class="p">:</span> <span class="n">TF</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_aoi_rad</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_check_tensor</span><span class="p">(</span><span class="n">new_aoi_rad</span><span class="p">)</span>
+
+<div class="viewcode-block" id="BaseReflectionPropagator.get_AOI_rad">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.base.BaseReflectionPropagator.get_AOI_rad">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_AOI_rad</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">AOI_rad</span></div>
+
+
+<div class="viewcode-block" id="BaseReflectionPropagator.set_AOI_rad">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.base.BaseReflectionPropagator.set_AOI_rad">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">set_AOI_rad</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">new_value</span><span class="p">:</span> <span class="n">TF</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">AOI_rad</span> <span class="o">=</span> <span class="n">new_value</span></div>
+
+
+<div class="viewcode-block" id="BaseReflectionPropagator.get_AOI_deg">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.base.BaseReflectionPropagator.get_AOI_deg">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_AOI_deg</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">AOI_rad</span><span class="o">.</span><span class="n">rad2deg</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="BaseReflectionPropagator.set_AOI_deg">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.base.BaseReflectionPropagator.set_AOI_deg">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">set_AOI_deg</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">new_value</span><span class="p">:</span> <span class="n">TF</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">set_AOI_rad</span><span class="p">(</span><span class="n">new_value</span> <span class="o">/</span> <span class="mi">180</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">pi</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="BaseReflectionPropagator.get_GAOI_rad">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.base.BaseReflectionPropagator.get_GAOI_rad">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_GAOI_rad</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">torch</span><span class="o">.</span><span class="n">pi</span> <span class="o">/</span> <span class="mi">2</span> <span class="o">+</span> <span class="p">(</span><span class="o">-</span><span class="bp">self</span><span class="o">.</span><span class="n">AOI_rad</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="BaseReflectionPropagator.set_GAOI_rad">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.base.BaseReflectionPropagator.set_GAOI_rad">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">set_GAOI_rad</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">new_value</span><span class="p">:</span> <span class="n">TF</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">set_AOI_rad</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">pi</span> <span class="o">/</span> <span class="mi">2</span> <span class="o">+</span> <span class="p">(</span><span class="o">-</span><span class="n">new_value</span><span class="p">))</span></div>
+
+
+<div class="viewcode-block" id="BaseReflectionPropagator.get_GAOI_deg">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.base.BaseReflectionPropagator.get_GAOI_deg">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_GAOI_deg</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_GAOI_rad</span><span class="p">()</span><span class="o">.</span><span class="n">rad2deg</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="BaseReflectionPropagator.set_GAOI_deg">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.base.BaseReflectionPropagator.set_GAOI_deg">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">set_GAOI_deg</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">new_value</span><span class="p">:</span> <span class="n">TF</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">set_GAOI_rad</span><span class="p">(</span><span class="n">new_value</span> <span class="o">/</span> <span class="mi">180</span> <span class="o">*</span> <span class="n">torch</span><span class="o">.</span><span class="n">pi</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="BaseReflectionPropagator.class_propagate">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.base.BaseReflectionPropagator.class_propagate">[docs]</a>
+    <span class="nd">@staticmethod</span>
+    <span class="nd">@abstractmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">class_propagate</span><span class="p">(</span>  <span class="c1"># pyright: ignore[ reportIncompatibleMethodOverride ]</span>
+        <span class="n">u</span><span class="p">:</span> <span class="n">ESW</span><span class="p">,</span>
+        <span class="n">dx</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">dq</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">z</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">wavelength</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">AOI_rad</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">diff_pattern_set</span><span class="p">:</span> <span class="n">DiffPatternSet</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ESW</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Propagation of the ESW from the Probe/Object-plane to the detector.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            x: ESW to propagate. Dimensions: (..., H, W)</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            ESW after propagation.</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">pass</span></div>
+
+
+<div class="viewcode-block" id="BaseReflectionPropagator.propagate">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.base.BaseReflectionPropagator.propagate">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">propagate</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">u</span><span class="p">:</span> <span class="n">ESW</span><span class="p">,</span>
+        <span class="n">diff_pattern_set</span><span class="p">:</span> <span class="n">DiffPatternSet</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">class_propagate</span><span class="p">(</span>
+            <span class="n">u</span><span class="o">=</span><span class="n">u</span><span class="p">,</span>
+            <span class="n">dx</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">dx</span><span class="p">,</span>
+            <span class="n">dq</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">dq</span><span class="p">,</span>
+            <span class="n">z</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">z</span><span class="p">,</span>
+            <span class="n">wavelength</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">wavelength</span><span class="p">,</span>
+            <span class="n">AOI_rad</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">AOI_rad</span><span class="p">,</span>
+            <span class="n">diff_pattern_set</span><span class="o">=</span><span class="n">diff_pattern_set</span><span class="p">,</span>
+        <span class="p">)</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_save_hdf5</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">hdf5_root</span><span class="p">:</span> <span class="n">h5py</span><span class="o">.</span><span class="n">Group</span><span class="p">):</span>
+        <span class="n">hdf5_root</span><span class="o">.</span><span class="n">attrs</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">H5PY_ATTR_AOI_RAD</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">AOI_rad</span><span class="o">.</span><span class="n">item</span><span class="p">()</span>
+        <span class="k">return</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="n">_save_hdf5</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">)</span>
+
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_from_hdf5</span><span class="p">(</span>
+        <span class="bp">cls</span><span class="p">,</span>
+        <span class="n">hdf5_root</span><span class="p">:</span> <span class="n">h5py</span><span class="o">.</span><span class="n">Group</span><span class="p">,</span>
+        <span class="n">device</span><span class="p">:</span> <span class="n">DeviceLikeType</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Self</span><span class="p">:</span>
+        <span class="n">device</span> <span class="o">=</span> <span class="n">device</span> <span class="ow">or</span> <span class="n">torch</span><span class="o">.</span><span class="n">cpu</span><span class="o">.</span><span class="n">current_device</span><span class="p">()</span>
+
+        <span class="n">dx</span> <span class="o">=</span> <span class="n">float_from_h5</span><span class="p">(</span><span class="n">hdf5_root</span><span class="o">.</span><span class="n">attrs</span><span class="p">,</span> <span class="bp">cls</span><span class="o">.</span><span class="n">H5PY_ATTR_SAMPLE_PIXEL_SIZE</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">dx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s2">&quot;dx not found in hdf5 file.&quot;</span><span class="p">)</span>
+
+        <span class="n">dq</span> <span class="o">=</span> <span class="n">float_from_h5</span><span class="p">(</span><span class="n">hdf5_root</span><span class="o">.</span><span class="n">attrs</span><span class="p">,</span> <span class="bp">cls</span><span class="o">.</span><span class="n">H5PY_ATTR_CAMERA_PIXEL_SIZE</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">dq</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s2">&quot;dq not found in hdf5 file.&quot;</span><span class="p">)</span>
+
+        <span class="n">z</span> <span class="o">=</span> <span class="n">tensor_from_h5</span><span class="p">(</span><span class="n">hdf5_root</span><span class="o">.</span><span class="n">attrs</span><span class="p">,</span> <span class="bp">cls</span><span class="o">.</span><span class="n">H5PY_ATTR_DISTANCE_TO_CAMERA</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">z</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s2">&quot;z not found in hdf5 file.&quot;</span><span class="p">)</span>
+        <span class="n">z</span> <span class="o">=</span> <span class="n">z</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="n">AOI_rad</span> <span class="o">=</span> <span class="n">tensor_from_h5</span><span class="p">(</span><span class="n">hdf5_root</span><span class="o">.</span><span class="n">attrs</span><span class="p">,</span> <span class="bp">cls</span><span class="o">.</span><span class="n">H5PY_ATTR_AOI_RAD</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">AOI_rad</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s2">&quot;AOI_rad not found&quot;</span><span class="p">)</span>
+
+        <span class="n">wavelength</span> <span class="o">=</span> <span class="n">tensor_from_h5</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">,</span> <span class="bp">cls</span><span class="o">.</span><span class="n">H5PY_KEY_WAVELENGTH</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">wavelength</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s2">&quot;wavelength not found.&quot;</span><span class="p">)</span>
+        <span class="n">wavelength</span> <span class="o">=</span> <span class="n">wavelength</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+
+        <span class="n">probe_shape_tens</span> <span class="o">=</span> <span class="n">tensor_from_h5</span><span class="p">(</span><span class="n">hdf5_root</span><span class="p">,</span> <span class="bp">cls</span><span class="o">.</span><span class="n">H5PY_KEY_PROBE_SHAPE</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">probe_shape_tens</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s2">&quot;probe_shape not found&quot;</span><span class="p">)</span>
+
+        <span class="n">probe_shape</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">Size</span><span class="p">(</span><span class="n">probe_shape_tens</span><span class="o">.</span><span class="n">int</span><span class="p">()</span><span class="o">.</span><span class="n">tolist</span><span class="p">())</span>  <span class="c1"># pyright: ignore[reportUnknownArgumentType,reportUnknownMemberType]</span>
+        <span class="k">return</span> <span class="bp">cls</span><span class="p">(</span>
+            <span class="n">dx</span><span class="o">=</span><span class="n">dx</span><span class="p">,</span>
+            <span class="n">dq</span><span class="o">=</span><span class="n">dq</span><span class="p">,</span>
+            <span class="n">z</span><span class="o">=</span><span class="n">z</span><span class="p">,</span>
+            <span class="n">AOI_rad</span><span class="o">=</span><span class="n">AOI_rad</span><span class="p">,</span>
+            <span class="n">wavelength</span><span class="o">=</span><span class="n">wavelength</span><span class="p">,</span>
+            <span class="n">probe_shape</span><span class="o">=</span><span class="n">probe_shape</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__str__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">ret</span> <span class="o">=</span> <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__str__</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">dict_to_log_str</span><span class="p">(</span>
+            <span class="n">ret</span><span class="p">,</span>
+            <span class="p">{</span><span class="s2">&quot;AOI (deg)&quot;</span><span class="p">:</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">get_AOI_deg</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">},</span>
+        <span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="PropagatorPlaceholder">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.base.PropagatorPlaceholder">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">PropagatorPlaceholder</span><span class="p">(</span><span class="n">BasePropagator</span><span class="p">):</span>
+<div class="viewcode-block" id="PropagatorPlaceholder.class_propagate">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.base.PropagatorPlaceholder.class_propagate">[docs]</a>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">class_propagate</span><span class="p">(</span>
+        <span class="n">u</span><span class="p">:</span> <span class="n">ESW</span><span class="p">,</span>
+        <span class="n">dx</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">dq</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">z</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">wavelength</span><span class="p">:</span> <span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">diff_pattern_set</span><span class="p">:</span> <span class="n">DiffPatternSet</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ESW</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">u</span></div>
+</div>
+
+
+
+<span class="n">TBasePropagator</span> <span class="o">=</span> <span class="n">NewType</span><span class="p">(</span><span class="s2">&quot;TBasePropagator&quot;</span><span class="p">,</span> <span class="n">BasePropagator</span><span class="p">)</span>
+<span class="n">TBaseReflectionPropagator</span> <span class="o">=</span> <span class="n">NewType</span><span class="p">(</span>
+    <span class="s2">&quot;TBaseReflectionPropagator&quot;</span><span class="p">,</span> <span class="n">BaseReflectionPropagator</span>
+<span class="p">)</span>
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../../index.html">function_list</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="../../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../../index.html">Documentation overview</a><ul>
+  <li><a href="../../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2025, Zhonghui Nie.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 8.2.3</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>

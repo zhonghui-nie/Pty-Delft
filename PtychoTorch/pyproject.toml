@@ -1,0 +1,95 @@
+[project]
+name = "PtychoTorch"
+version = "0.1.0"
+readme = "README.md"
+requires-python = ">=3.12, <3.14"
+dependencies = [
+    "h5py>=3.14.0",
+    "matplotlib>=3.10.5",
+    "matplotlib-scalebar>=0.9.0",
+    "numpy>=2.3.2",
+    "pandas>=2.3.1",
+    "pandas-stubs>=2.3.0.250703",
+    "pillow>=11.3.0",
+    "tifffile>=2025.6.11",
+    "tqdm>=4.67.1",
+]
+
+[project.optional-dependencies]
+cpu = [
+  "torch>=2.5.1",
+  "torchvision>=0.20.1",
+]
+cu121 = [
+  "torch>=2.5.1",
+  "torchvision>=0.20.1",
+]
+
+[dependency-groups]
+dev = [
+    "docformatter>=1.7.7",
+    "ipykernel>=6.30.1",
+    "pre-commit>=4.2.0",
+    "pyright>=1.1.403",
+    "pytest>=8.4.1",
+    "ruff>=0.12.7",
+]
+
+[tool.pyright]
+typeCheckingMode = "strict"
+reportMissingTypeStubs = "warning"
+venvPath = "."
+venv = ".venv"
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.docformatter]
+recursive = true
+wrap-summaries = 82
+wrap-descriptions = 82
+blank = true
+
+[tool.uv]
+conflicts = [
+  [
+    { extra = "cpu" },
+    { extra = "cu121" },
+  ],
+]
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cpu", extra = "cpu", marker = "platform_system == 'Linux'" },
+  { index = "pytorch-cu121", extra = "cu121" },
+]
+torchvision = [
+  { index = "pytorch-cpu", extra = "cpu", marker = "platform_system == 'Linux'" },
+  { index = "pytorch-cu121", extra = "cu121" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true

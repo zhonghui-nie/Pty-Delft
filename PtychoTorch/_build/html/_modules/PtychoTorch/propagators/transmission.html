@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PtychoTorch.propagators.transmission &#8212; function_list XXX documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/alabaster.css?v=27fed22d" />
+    <script src="../../../_static/documentation_options.js?v=22a66780"></script>
+    <script src="../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+   
+  <link rel="stylesheet" href="../../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <h1>Source code for PtychoTorch.propagators.transmission</h1><div class="highlight"><pre>
+<span></span><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">PtychoTorch.propagators.asp</span><span class="w"> </span><span class="kn">import</span> <span class="n">scaledASP_quadratic_phases</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">..typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">ESW</span><span class="p">,</span> <span class="n">TFL</span><span class="p">,</span> <span class="n">DiffPatternSet</span>
+
+<span class="c1"># from PRA.propagators.propagators_new import NA_diffraction_limit, Propagator_Base</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">fft2c</span><span class="p">,</span> <span class="n">ifft2c</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.base</span><span class="w"> </span><span class="kn">import</span> <span class="n">BasePropagator</span><span class="p">,</span> <span class="n">NA_diffraction_limit</span>
+
+
+<div class="viewcode-block" id="Propagator_Fraunhofer">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.transmission.Propagator_Fraunhofer">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Propagator_Fraunhofer</span><span class="p">(</span><span class="n">BasePropagator</span><span class="p">):</span>
+<div class="viewcode-block" id="Propagator_Fraunhofer.class_forward">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.transmission.Propagator_Fraunhofer.class_forward">[docs]</a>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">class_forward</span><span class="p">(</span>
+        <span class="n">u</span><span class="p">:</span> <span class="n">ESW</span><span class="p">,</span>
+        <span class="n">dx</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">dq</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">z</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">wavelength</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">diff_pattern_set</span><span class="p">:</span> <span class="n">DiffPatternSet</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ESW</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">fft2c</span><span class="p">(</span><span class="n">u</span><span class="p">)</span></div>
+
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">dx</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+        <span class="c1"># calculate size of detector (FoV)</span>
+        <span class="n">Ld</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">dq</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">probe_shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">wavelength</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="o">*</span> <span class="bp">self</span><span class="o">.</span><span class="n">z</span><span class="o">.</span><span class="n">item</span><span class="p">()</span> <span class="o">/</span> <span class="n">Ld</span>
+
+    <span class="nd">@dx</span><span class="o">.</span><span class="n">setter</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">dx</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">new_dx</span><span class="p">:</span> <span class="n">TFL</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span></div>
+
+
+
+<div class="viewcode-block" id="Propagator_ASP_scaled">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.transmission.Propagator_ASP_scaled">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Propagator_ASP_scaled</span><span class="p">(</span><span class="n">BasePropagator</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Implemenation of Angular Spectrum Propagator.</span>
+
+<span class="sd">    See &#39;Numerical simulation of optical wave propagation with examples in</span>
+<span class="sd">    MATLAB&#39;, p.102</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">dq</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">z</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">wavelength</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">probe_shape</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Size</span><span class="p">,</span>
+        <span class="n">compute_Q3</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">bandlimit</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">dx</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">device</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">device</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">):</span>
+        <span class="k">if</span> <span class="n">dx</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">dx</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="n">NA_diffraction_limit</span><span class="p">(</span>
+                    <span class="n">dq</span><span class="o">=</span><span class="n">dq</span><span class="p">,</span>
+                    <span class="n">z</span><span class="o">=</span><span class="n">z</span><span class="p">,</span>
+                    <span class="n">wavelength</span><span class="o">=</span><span class="n">wavelength</span><span class="p">,</span>
+                    <span class="n">n_pixels_detector</span><span class="o">=</span><span class="n">probe_shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">],</span>
+                <span class="p">)</span>
+                <span class="o">.</span><span class="n">min</span><span class="p">()</span>
+                <span class="o">.</span><span class="n">item</span><span class="p">()</span>
+            <span class="p">)</span>
+
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span>
+            <span class="n">dx</span><span class="o">=</span><span class="n">dx</span><span class="p">,</span>
+            <span class="n">dq</span><span class="o">=</span><span class="n">dq</span><span class="p">,</span>
+            <span class="n">z</span><span class="o">=</span><span class="n">z</span><span class="p">,</span>
+            <span class="n">wavelength</span><span class="o">=</span><span class="n">wavelength</span><span class="p">,</span>
+            <span class="n">probe_shape</span><span class="o">=</span><span class="n">probe_shape</span><span class="p">,</span>
+            <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">compute_Q3</span> <span class="o">=</span> <span class="n">compute_Q3</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">bandlimit</span> <span class="o">=</span> <span class="n">bandlimit</span>
+
+    <span class="c1"># def _save_hdf5(self, hdf5_root: h5py.Group):</span>
+    <span class="c1">#     super()._save_hdf5(hdf5_root)</span>
+    <span class="c1">#</span>
+    <span class="c1">#     hdf5_root.attrs[&quot;compute_Q3&quot;] = self.compute_Q3</span>
+    <span class="c1">#     hdf5_root.attrs[&quot;bandlimit&quot;] = self.bandlimit</span>
+    <span class="c1">#</span>
+    <span class="c1"># @classmethod</span>
+    <span class="c1"># def _from_hdf5(cls, hdf5_root: h5py.Group, device: str = &quot;cpu&quot;):</span>
+    <span class="c1">#     ret = cls._from_hdf5(hdf5_root=hdf5_root, device=device)</span>
+    <span class="c1">#     ret.compute_Q3 = hdf5_root.attrs[&quot;compute_Q3&quot;]</span>
+    <span class="c1">#     ret.bandlimit = hdf5_root.attrs[&quot;bandlimit&quot;]</span>
+    <span class="c1">#     return ret</span>
+
+<div class="viewcode-block" id="Propagator_ASP_scaled.class_propagate">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.transmission.Propagator_ASP_scaled.class_propagate">[docs]</a>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">class_propagate</span><span class="p">(</span>
+        <span class="n">u</span><span class="p">:</span> <span class="n">ESW</span><span class="p">,</span>
+        <span class="n">dx</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">dq</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+        <span class="n">z</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">wavelength</span><span class="p">:</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span>
+        <span class="n">diff_pattern_set</span><span class="p">:</span> <span class="n">DiffPatternSet</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">bandlimit</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+        <span class="n">compute_Q3</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ESW</span><span class="p">:</span>
+        <span class="c1"># wavelength: either 0-dim or 1-dim with shape [N_wavelengths]</span>
+        <span class="c1"># u.shape = [..., H, W] or</span>
+        <span class="c1">#   for multiple wavelengths [..., 1, H, W] for non-dispersive u</span>
+        <span class="c1">#   for multiple wavelengths [..., N_wavelengths, H, W] for dispersive u</span>
+
+        <span class="n">N</span> <span class="o">=</span> <span class="n">u</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+        <span class="c1"># Q1, Q2, Q3 = asp.scaledASP_quadratic_phases(</span>
+        <span class="n">Q1</span><span class="p">,</span> <span class="n">Q2</span><span class="p">,</span> <span class="n">Q3</span> <span class="o">=</span> <span class="n">scaledASP_quadratic_phases</span><span class="p">(</span>
+            <span class="n">N</span><span class="o">=</span><span class="n">N</span><span class="p">,</span>
+            <span class="n">dx</span><span class="o">=</span><span class="n">dx</span><span class="p">,</span>
+            <span class="n">dq</span><span class="o">=</span><span class="n">dq</span><span class="p">,</span>
+            <span class="n">wavelength</span><span class="o">=</span><span class="n">wavelength</span><span class="p">,</span>
+            <span class="n">z</span><span class="o">=</span><span class="n">z</span><span class="p">,</span>
+            <span class="n">compute_Q3</span><span class="o">=</span><span class="n">compute_Q3</span><span class="p">,</span>
+            <span class="n">bandlimit</span><span class="o">=</span><span class="n">bandlimit</span><span class="p">,</span>
+        <span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">compute_Q3</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">Q3</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s2">&quot;Q3 is None&quot;</span><span class="p">)</span>
+            <span class="n">propagated_field</span> <span class="o">=</span> <span class="n">Q3</span> <span class="o">*</span> <span class="n">ifft2c</span><span class="p">(</span><span class="n">Q2</span> <span class="o">*</span> <span class="n">fft2c</span><span class="p">(</span><span class="n">Q1</span> <span class="o">*</span> <span class="n">u</span><span class="p">))</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">propagated_field</span> <span class="o">=</span> <span class="n">ifft2c</span><span class="p">(</span><span class="n">Q2</span> <span class="o">*</span> <span class="n">fft2c</span><span class="p">(</span><span class="n">Q1</span> <span class="o">*</span> <span class="n">u</span><span class="p">))</span>
+
+        <span class="k">return</span> <span class="n">propagated_field</span></div>
+
+
+<div class="viewcode-block" id="Propagator_ASP_scaled.to_str_list">
+<a class="viewcode-back" href="../../../PtychoTorch.propagators.html#PtychoTorch.propagators.transmission.Propagator_ASP_scaled.to_str_list">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_str_list</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">wavelength</span><span class="o">.</span><span class="n">dim</span><span class="p">()</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">wavelength</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mf">1e9</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">[</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">w</span><span class="o">.</span><span class="n">item</span><span class="p">()</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mf">1e9</span><span class="si">:</span><span class="s2">.2f</span><span class="si">}</span><span class="s2">&quot;</span> <span class="k">for</span> <span class="n">w</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">wavelength</span><span class="p">]</span></div>
+</div>
+
+</pre></div>
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../../index.html">function_list</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="../../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../../index.html">Documentation overview</a><ul>
+  <li><a href="../../index.html">Module code</a><ul>
+  </ul></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2025, Zhonghui Nie.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 8.2.3</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+    </div>
+
+    
+
+    
+  </body>
+</html>
