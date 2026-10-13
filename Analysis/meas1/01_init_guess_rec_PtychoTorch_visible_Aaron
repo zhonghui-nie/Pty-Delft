@@ -1,0 +1,168 @@
+# %%
+from pathlib import Path
+import numpy as np 
+import matplotlib.pyplot as plt
+import torch
+from skimage.transform import resize
+
+import PtychoTorch.loss_functions as lf
+from PtychoTorch.engine import AutoGradPIE
+#from PtychoTorch.filters import r_filter
+from PtychoTorch.propagators import propagators
+from PtychoTorch.utils import PO_initialization
+from PtychoTorch.utils.data.dataloader import BasicDataLoader
+from PtychoTorch.utils.data.dataset import DataSet
+from PtychoTorch.utils.PO_initialization import aperture
+from PtychoTorch.utils.helper_functions import FRC
+from PtychoTorch.utils.plotting import plot_hsv
+import h5py
+from scipy.ndimage import gaussian_filter
+
+
+# %%
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"running on {device=}")
+
+# %%
+measurement_file = Path(r"/home/friverasanchez/projects/Visible_setup_ptychography/fingerprint_102p.hdf5")
+
+# %%
+# Create new DataSet-Object containing all the diffraction data.
+ds = DataSet.from_hdf5(
+    measurement_file,
+    device=device,
+)
+offset = 0
+
+ds.ptychogram = torch.clamp(ds.ptychogram-offset,0,(ds.ptychogram-offset).max())
+plt.imshow(ds.ptychogram[0].detach().cpu().log())
+
+
+#%%
+# Normalize Dataset
+ds.ptychogram /= ds.ptychogram.max()
+ds.ptychogram = ds.ptychogram[:,:,int((3384-2704)/2):]
+ds.ptychogram = ds.ptychogram[:,:,:3044-int((3384-2704)/2)]
+
+# %%
+plt.imshow(ds[0].diff_pattern.detach().cpu().log())
+plt.show()
+ds.encoder.plot_scangrids()
+
+
+# %%
+prop = propagators.Propagator_ASP_scaled(
+    z=8.6e-2,
+    dq=3.69e-6,
+    probe_shape=ds.shape[-2:],
+    wavelength=756e-9,
+)
+
+# %%
+# Create Iterator that reads the data (diffraction data and positions) from the Dataset.
+iter = BasicDataLoader(
+    dataset=ds,
+    randomize=True,
+)
+
+
+# %%
+# Define initial guess for the probe. dxp is the Pixel size for the Probe
+diameter = 1.0e-3
+initial_probe = aperture(diameter,
+    propagator=prop,
+    dtype=torch.complex128,
+    device=device,
+)
+
+# Add quadratic phase (defocus)
+r = 8.0 * torch.pi  
+x = torch.linspace(-r, r, initial_probe.shape[0])
+xx, yy = torch.meshgrid(x, x)
+quad_phase = (xx**2 + yy**2) 
+# Gaussian fitler
+sigma = 50
+ground_truth_probe_flat = torch.from_numpy(gaussian_filter(initial_probe.abs().cpu(),sigma)).to(device=device)
+ground_truth_probe = ground_truth_probe_flat * torch.exp(1j*(quad_phase)).to(device=device)
+initial_probe = ground_truth_probe/ground_truth_probe.abs().max()
+plt.figure()
+plot_hsv(initial_probe,unit_name='mm',dx=prop.dq * 1e3,overexpose=1.5,window_size=600)
+plt.show()
+# Define initial guess for the Object. In this case just consists of ones.
+# ds.encoder.find_minimal_object_shape_px returns the minimal shape for the object.
+obj_shape = ds.encoder.find_minimal_object_shape_px(prop)
+# obj_shape = torch.Size([3285,3285])
+
+initial_obj = torch.ones(
+    obj_shape,
+    dtype=torch.complex128,
+    device=device,
+)
+# better_guess = np.load('better_guess_usaf.npy')
+# better_guess = resize(better_guess,(int(better_guess.shape[0]*2),int(better_guess.shape[0]*2)),anti_aliasing=True)
+
+# %%
+engine = AutoGradPIE(
+    initial_probe=initial_probe,
+    initial_object=initial_obj,
+    # r_filter=[
+    #     r_filter.comStabilizationIntensity(),
+    #     r_filter.entrance_pupil_filter(3.0e-3),
+    # ],
+    propagator=prop,
+    device=device,
+)
+# from PRA.utils.data.Encoder import Encoder
+
+# engine.apply_filters()
+engine.change_sampling2(4, None)
+
+# engine.set_object(torch.from_numpy(better_guess).to(torch.complex128))
+# engine.load_object(filepath='./Reconstructed/lens_paper_rec')
+# engine.load_probe(filepath='./Reconstructed/lens_paper_probe_rec')
+
+# %%
+# engine.add_filter(r_filter.entrance_pupil_filter(2.5e-3))
+optim = torch.optim.Adam(
+    [
+        {
+            "params": [
+                engine.object,
+            ],'lr':1e-3
+        },
+    
+         {
+            "params": [
+                engine.probe,
+            ],'lr':1e-3
+        },
+    ],
+)
+engine.reconstruct(
+    train_loader=iter,
+    optimizer=optim,
+    loss_func=lf.MSE_amplitude,
+    N_epoch=200,
+    batch_size=1,
+)
+
+#%%
+#Plotting reconstructions
+fig = plt.figure()
+ax = fig.add_subplot()
+ax.plot(engine.loss)
+ax.grid('True',which='both')
+ax.set_xlabel('iterations')
+ax.set_ylabel('Loss')
+ax.loglog()
+plt.show()
+
+fig,ax = plt.subplots()
+plot_hsv(engine.object,mode='MIXED',unit_name='mm',dx=1e3 * prop.dx,overexpose=1.6,ax=ax,window_size=500)
+plt.show()
+
+plt.figure()
+plot_hsv(engine.probe,mode='MIXED',unit_name='mm',dx=prop.dq * 1e3,overexpose=1.2,window_size=300)
+plt.show()
+
+ 
